@@ -4,3 +4,28 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = { version = "1.0.104", features = ["backtrace"] }
+clap = { version = "4.6.7", features = ["cargo", "derive", "help"] }
+log = "0.4.34"
+ndarray = "0.17.2"
+nom = "8.0.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+simple_logger = { version = "5.2.0", features = ["stderr"] }
+tabled = { version = "0.22.0", features = ["ansi"] }
+
+[lints.clippy]
+# Comprehensive lints for larger projects
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "allow", priority = -1 }
+
+# Security-focused lints
+unwrap_used = "deny"
+expect_used = "deny"
+
+# Allow some pedantic lints that are too strict for larger projects
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
