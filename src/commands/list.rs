@@ -8,7 +8,7 @@ use tabled::{Table, Tabled};
 
 use super::Exit;
 use crate::{
-    options::{output::OutputMode, select::Filter},
+    options::{filter::Filter, output::OutputMode},
     query::AllUsage,
     writer,
 };

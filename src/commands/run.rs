@@ -14,7 +14,10 @@ use itertools::Itertools;
 
 use super::{Exit, TEMPORARY_FAILURE, USAGE_ERROR};
 use crate::{
-    options::select::{Filter, Pick, Strategy},
+    options::{
+        filter::Filter,
+        select::{Select, Strategy},
+    },
     query::{AllUsage, Topology},
 };
 
@@ -73,11 +76,11 @@ pub struct Execute {
 /// cards
 #[derive(Args, Debug)]
 pub struct SelectWaitAndExecute {
-    #[command(flatten, next_help_heading = "Choosing cards")]
+    #[command(flatten, next_help_heading = "Filtering cards")]
     pub filter: Filter,
 
-    #[command(flatten, next_help_heading = "Picking cards")]
-    pub pick: Pick,
+    #[command(flatten, next_help_heading = "Selecting cards")]
+    pub select: Select,
 
     #[command(flatten, next_help_heading = "Waiting for cards")]
     pub wait: Waiting,
@@ -115,8 +118,8 @@ impl SelectWaitAndExecute {
             log::error!("{error}");
             return Ok(Exit::Code(ExitCode::from(USAGE_ERROR)));
         }
-        let count = usize::try_from(self.pick.count).unwrap_or(usize::MAX);
-        if matches!(self.pick.strategy, Strategy::TopologyAware) && count == 1 {
+        let count = usize::try_from(self.select.count).unwrap_or(usize::MAX);
+        if matches!(self.select.strategy, Strategy::TopologyAware) && count == 1 {
             log::warn!(
                 "`--strategy topology-aware` has no effect with `-k 1`; selecting the first idle GPU"
             );
@@ -130,7 +133,7 @@ impl SelectWaitAndExecute {
         } else {
             start.checked_add(Duration::from_secs(self.wait.timeout))
         };
-        let topology = if matches!(self.pick.strategy, Strategy::TopologyAware) && count > 1 {
+        let topology = if matches!(self.select.strategy, Strategy::TopologyAware) && count > 1 {
             match Topology::query_with_deadline(deadline) {
                 Ok(topology) => Some(topology),
                 Err(error) => {
@@ -281,7 +284,7 @@ impl SelectWaitAndExecute {
             .filter(|(_, stats)| self.filter.accepts_usage(*stats))
             .map(|(index, _)| *index)
             .collect::<Vec<_>>();
-        let Some(selected) = self.pick.select(&candidates, &idle, topology) else {
+        let Some(selected) = self.select.select(&candidates, &idle, topology) else {
             if self.execute.dry_run {
                 println!("no GPUs match the current constraints");
                 return Ok(Round::Done(Exit::Code(ExitCode::from(TEMPORARY_FAILURE))));
