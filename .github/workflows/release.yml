@@ -6,30 +6,36 @@ on:
   release:
     types: [published]
 
-env:
-  TARGET: x86_64-unknown-linux-musl
-
 jobs:
   build-release:
-    name: release x86_64-unknown-linux-musl
-    runs-on: ubuntu-24.04
+    name: release ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Cross-Compilation Tools
+        if: contains(matrix.target, 'linux-musl')
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          target: ${{ env.TARGET }}
+          target: ${{ matrix.target }}
 
       - name: Run Build
-        run: cargo build --locked --release --target ${{ env.TARGET }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Setup python for checksums
         uses: actions/setup-python@v7
@@ -39,8 +45,8 @@ jobs:
       - name: Create artifact directory
         shell: bash
         run: |
-          directory=gq-${{ env.TARGET }}
-          build_dir=target/${{ env.TARGET }}/release
+          directory=gq-${{ matrix.target }}
+          build_dir=target/${{ matrix.target }}/release
           # build.rs may write to target/<profile> rather than target/<target>/<profile>.
           [ -d "$build_dir/completions" ] || build_dir=target/release
 
@@ -61,12 +67,13 @@ jobs:
       - name: Upload Release
         uses: ncipollo/release-action@v1.21.0
         with:
-          artifacts: "gq-${{ env.TARGET }}.*"
+          artifacts: "gq-${{ matrix.target }}.*"
           allowUpdates: true
           omitNameDuringUpdate: true
           omitBodyDuringUpdate: true
 
       - name: Upload Shell Completion
+        if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
         uses: ncipollo/release-action@v1.21.0
         with:
           artifacts: "artifacts/completions/*"
@@ -75,9 +82,32 @@ jobs:
           omitBodyDuringUpdate: true
 
       - name: Upload Manpage
+        if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
         uses: ncipollo/release-action@v1.21.0
         with:
           artifacts: "artifacts/man/*"
           allowUpdates: true
           omitNameDuringUpdate: true
           omitBodyDuringUpdate: true
+  update-changelog:
+    name: Update Changelog
+    runs-on: ubuntu-latest
+    needs: build-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Update CHANGELOG
+        id: changelog
+        uses: requarks/changelog-action@v1.10.3
+        with:
+          token: ${{ github.token }}
+          tag: ${{ github.event.release.tag_name }}
+          writeToFile: false
+
+      - name: Update Release
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          allowUpdates: true
+          body: ${{ steps.changelog.outputs.changes }}
