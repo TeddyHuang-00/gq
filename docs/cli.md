@@ -123,13 +123,21 @@ stdout. A running child inherits gq's standard input, output, and error.
 Logs are written to stderr with timestamps and levels. Data and decisions are
 written to stdout.
 
-- Default level is Info.
-- `-v` enables Debug, including candidate and idle card sets.
+- Default level is Info: idle thresholds, wait reasons, starting cards, and
+  warnings about degraded or contradictory requests. The effective candidate
+  scope is logged at Info when `--include` or `--exclude` is set.
+- `-v` enables Debug: excluded indices, the unfiltered `N/N` candidate count,
+  per-GPU idle decisions with the computed threshold, selection ranking and
+  topology target tuples, and the next probe delay with the remaining timeout.
 - `-vv` enables Trace, including full `nvidia-smi` output.
 - `-q` disables logging entirely.
 - `RUST_LOG` can override the level unless `-q` is used.
 - Color is used only when stderr is a terminal and `NO_COLOR` is unset.
 
+Repeated wait rounds keep the same state at Debug; Info is reserved for the
+first wait and for changes in the reason. A `--probe-count` above 60 warns once
+about the cost of sampling; a count whose one-second intervals cannot fit in
+`--timeout` also warns once, naming `--timeout` or `--probe-count` as the fix.
 Unhandled errors print `Error: ...` to stderr unless `--quiet` is set.
 
 ## Completion and man page

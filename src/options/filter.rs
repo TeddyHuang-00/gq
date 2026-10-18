@@ -100,12 +100,7 @@ impl Filter {
             };
             for range in ranges {
                 if mentions_absent(range, present) {
-                    let end = range.end.saturating_sub(1);
-                    let mention = if range.start == end {
-                        range.start.to_string()
-                    } else {
-                        format!("{}-{end}", range.start)
-                    };
+                    let mention = range_label(range);
                     log::warn!(
                         "{flag} {mention} mentions cards not present; present cards: {present:?}"
                     );
@@ -114,25 +109,175 @@ impl Filter {
         }
     }
 
+    /// Whether `--include` or `--exclude` narrows the card set.
+    pub const fn has_index_filter(&self) -> bool {
+        self.include.is_some() || self.exclude.is_some()
+    }
+
+    /// Logs the candidate count and the effective include/exclude flags once
+    /// per command, after the first successful probe.
+    ///
+    /// `present` and `candidates` are in ascending index order.
+    pub fn log_candidates(&self, present: &[usize], candidates: &[usize]) {
+        let ranges = self
+            .include
+            .as_ref()
+            .map(|ranges| ("--include", ranges))
+            .or_else(|| self.exclude.as_ref().map(|ranges| ("--exclude", ranges)));
+        let note = ranges.map_or_else(String::new, |(flag, ranges)| {
+            let ranges = ranges.iter().map(range_label).collect::<Vec<_>>().join(",");
+            format!(" ({flag} {ranges})")
+        });
+        let line = format!(
+            "candidates: {}/{} GPUs{note}",
+            candidates.len(),
+            present.len()
+        );
+        // An unfiltered `N/N` count is noise at Info; keep it as detail.
+        if self.has_index_filter() {
+            log::info!("{line}");
+        } else {
+            log::debug!("{line}");
+        }
+        if candidates.len() < present.len() {
+            let dropped = present
+                .iter()
+                .copied()
+                .filter(|index| !candidates.contains(index))
+                .collect::<Vec<_>>();
+            log::debug!("not candidates: {dropped:?}");
+        }
+    }
+
+    /// Logs the effective idle thresholds once per command.
+    pub fn log_idle_rule(&self) {
+        let (memory, default) = match (self.min_vram, self.max_vram) {
+            (Some(min), _) => (format!("free VRAM >= {}", describe_vram(min)), ""),
+            (None, Some(max)) => (format!("used VRAM <= {}", describe_vram(max)), ""),
+            (None, None) => (
+                format!("used VRAM <= {}", describe_vram(DEFAULT_MAX_VRAM)),
+                " (default)",
+            ),
+        };
+        let utilization = self.max_utilization.map_or_else(
+            || "no utilization limit".to_owned(),
+            |max| format!("utilization <= {}%", max.0),
+        );
+        log::info!("idle rule: {memory}{default}; {utilization}");
+    }
+
+    /// Logs why one candidate is or is not idle, at Debug.
+    pub fn log_idle(&self, index: usize, stats: UsageInfo) {
+        if !log::log_enabled!(log::Level::Debug) {
+            return;
+        }
+        match self.usage_miss(stats) {
+            None => {
+                let memory = self.min_vram.map_or_else(
+                    || {
+                        let max = self.max_vram.unwrap_or(DEFAULT_MAX_VRAM);
+                        format!(
+                            "used {} <= {}",
+                            mib_label(stats.memory_used_mib),
+                            mib_label(threshold_mib(max, stats.memory_total_mib))
+                        )
+                    },
+                    |min| {
+                        format!(
+                            "free {} >= {}",
+                            mib_label(stats.memory_free_mib),
+                            mib_label(threshold_mib(min, stats.memory_total_mib))
+                        )
+                    },
+                );
+                let value = self.min_vram.or(self.max_vram).unwrap_or(DEFAULT_MAX_VRAM);
+                log::debug!(
+                    "GPU{index}: idle ({memory}{}, util {:.0}%)",
+                    threshold_note(value),
+                    stats.utilization_percent
+                );
+            }
+            Some(UsageMiss::Used {
+                used_mib,
+                limit_mib,
+                value,
+            }) => log::debug!(
+                "GPU{index}: not idle: used VRAM {} > {}{}",
+                mib_label(used_mib),
+                mib_label(limit_mib),
+                threshold_note(value)
+            ),
+            Some(UsageMiss::Free {
+                free_mib,
+                limit_mib,
+                value,
+            }) => log::debug!(
+                "GPU{index}: not idle: free VRAM {} < {}{}",
+                mib_label(free_mib),
+                mib_label(limit_mib),
+                threshold_note(value)
+            ),
+            Some(UsageMiss::Utilization { actual, limit }) => {
+                log::debug!("GPU{index}: not idle: utilization {actual:.0}% > {limit}%");
+            }
+        }
+    }
+
     /// Whether measured usage meets the configured availability thresholds.
     ///
     /// Bounds are inclusive.
     pub fn accepts_usage(&self, stats: UsageInfo) -> bool {
-        let memory_ok = self.min_vram.map_or_else(
-            || {
-                stats.memory_used_mib
-                    <= threshold_mib(
-                        self.max_vram.unwrap_or(DEFAULT_MAX_VRAM),
-                        stats.memory_total_mib,
-                    )
-            },
-            |min| stats.memory_free_mib >= threshold_mib(min, stats.memory_total_mib),
-        );
-        let utilization_ok = self
-            .max_utilization
-            .is_none_or(|max| stats.utilization_percent <= max.0);
-        memory_ok && utilization_ok
+        self.usage_miss(stats).is_none()
     }
+
+    /// Returns the first failed idle threshold, if any.
+    fn usage_miss(&self, stats: UsageInfo) -> Option<UsageMiss> {
+        if let Some(min) = self.min_vram {
+            let limit_mib = threshold_mib(min, stats.memory_total_mib);
+            if stats.memory_free_mib < limit_mib {
+                return Some(UsageMiss::Free {
+                    free_mib: stats.memory_free_mib,
+                    limit_mib,
+                    value: min,
+                });
+            }
+        } else {
+            let value = self.max_vram.unwrap_or(DEFAULT_MAX_VRAM);
+            let limit_mib = threshold_mib(value, stats.memory_total_mib);
+            if stats.memory_used_mib > limit_mib {
+                return Some(UsageMiss::Used {
+                    used_mib: stats.memory_used_mib,
+                    limit_mib,
+                    value,
+                });
+            }
+        }
+        self.max_utilization.and_then(|limit| {
+            (stats.utilization_percent > limit.0).then_some(UsageMiss::Utilization {
+                actual: stats.utilization_percent,
+                limit: limit.0,
+            })
+        })
+    }
+}
+
+/// Why a card fails the idle predicate. The enum itself formats nothing;
+/// `log_idle` formats it only when Debug is enabled.
+enum UsageMiss {
+    Used {
+        used_mib: f64,
+        limit_mib: f64,
+        value: Vram,
+    },
+    Free {
+        free_mib: f64,
+        limit_mib: f64,
+        value: Vram,
+    },
+    Utilization {
+        actual: f64,
+        limit: f64,
+    },
 }
 
 /// Whether a range mentions any index that is not present.
@@ -143,6 +288,51 @@ fn mentions_absent(range: &Range<usize>, present: &[usize]) -> bool {
     range
         .clone()
         .any(|index| present.binary_search(&index).is_err())
+}
+
+/// Formats an inclusive range as it appears on the command line: `3` or `2-5`.
+fn range_label(range: &Range<usize>) -> String {
+    let end = range.end.saturating_sub(1);
+    if range.start == end {
+        range.start.to_string()
+    } else {
+        format!("{}-{end}", range.start)
+    }
+}
+
+/// Formats a MiB size for logs, keeping one decimal below 10 MiB when the
+/// value is not integral (for example `0.5 MiB` instead of `0 MiB`).
+fn mib_label(mib: f64) -> String {
+    if mib < 10.0 && mib.fract() > 0.0 {
+        format!("{mib:.1} MiB")
+    } else {
+        format!("{mib:.0} MiB")
+    }
+}
+
+/// Formats a configured VRAM threshold for logs.
+#[allow(clippy::cast_precision_loss)] // VRAM sizes are within f64's exact integer range.
+fn describe_vram(value: Vram) -> String {
+    match value {
+        Vram::Bytes(bytes) => {
+            let mib = bytes as f64 / (1024.0 * 1024.0);
+            if mib >= 1024.0 {
+                format!("{:.1} GiB", mib / 1024.0)
+            } else {
+                mib_label(mib)
+            }
+        }
+        Vram::Percent(percent) => format!("{}% of total VRAM", percent.0),
+    }
+}
+
+/// Explains a percentage threshold; absolute sizes are already clear from the
+/// MiB limit in the same message.
+fn threshold_note(value: Vram) -> String {
+    match value {
+        Vram::Bytes(_) => String::new(),
+        Vram::Percent(percent) => format!(", {}% of total", percent.0),
+    }
 }
 
 fn threshold_mib(value: Vram, total_mib: f64) -> f64 {
@@ -237,5 +427,74 @@ mod tests {
         filter.max_vram = Some(Vram::Bytes(0));
         filter.min_vram = Some(Vram::Bytes(700 * 1024 * 1024));
         assert!(filter.accepts_usage(stats(1024.0, 324.0, 0.0)));
+    }
+
+    #[test]
+    fn formats_vram_thresholds_for_logs() {
+        assert_eq!(describe_vram(DEFAULT_MAX_VRAM), "100 MiB");
+        assert_eq!(
+            describe_vram(Vram::Bytes(8 * 1024 * 1024 * 1024)),
+            "8.0 GiB"
+        );
+        assert_eq!(
+            describe_vram(Vram::Percent(Percent(25.0))),
+            "25% of total VRAM"
+        );
+        // Sub-MiB and fractional thresholds must not collapse to `0 MiB`.
+        assert_eq!(describe_vram(Vram::Bytes(500 * 1024)), "0.5 MiB");
+        assert_eq!(mib_label(0.0), "0 MiB");
+        assert_eq!(mib_label(5.0), "5 MiB");
+        assert_eq!(mib_label(9.5), "9.5 MiB");
+        assert_eq!(mib_label(1024.0), "1024 MiB");
+        assert_eq!(threshold_note(DEFAULT_MAX_VRAM), "");
+        assert_eq!(
+            threshold_note(Vram::Percent(Percent(25.0))),
+            ", 25% of total"
+        );
+    }
+
+    #[test]
+    fn reports_the_first_failed_idle_threshold() {
+        let default_filter = filter();
+        assert!(
+            default_filter
+                .usage_miss(stats(1024.0, 50.0, 0.0))
+                .is_none()
+        );
+        assert!(matches!(
+            default_filter.usage_miss(stats(1024.0, 150.0, 0.0)),
+            Some(UsageMiss::Used { .. })
+        ));
+
+        let mut utilization_filter = filter();
+        utilization_filter.max_utilization = Some(Percent(10.0));
+        assert!(matches!(
+            utilization_filter.usage_miss(stats(1024.0, 0.0, 20.0)),
+            Some(UsageMiss::Utilization { .. })
+        ));
+
+        let mut min_filter = filter();
+        min_filter.min_vram = Some(Vram::Percent(Percent(50.0)));
+        assert!(matches!(
+            min_filter.usage_miss(stats(1024.0, 700.0, 0.0)),
+            Some(UsageMiss::Free { .. })
+        ));
+
+        // Memory is checked first when both memory and utilization fail.
+        let mut both_used = filter();
+        both_used.max_vram = Some(Vram::Bytes(0));
+        both_used.max_utilization = Some(Percent(0.0));
+        assert!(matches!(
+            both_used.usage_miss(stats(1024.0, 150.0, 50.0)),
+            Some(UsageMiss::Used { .. })
+        ));
+
+        let mut both_free = filter();
+        both_free.min_vram = Some(Vram::Percent(Percent(50.0)));
+        both_free.max_utilization = Some(Percent(0.0));
+        assert!(matches!(
+            both_free.usage_miss(stats(1024.0, 700.0, 50.0)),
+            Some(UsageMiss::Free { .. })
+        ));
     }
 }

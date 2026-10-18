@@ -111,6 +111,23 @@ enum Round {
     Wait,
 }
 
+/// Remembers the last wait reason so repeated rounds log at debug.
+#[derive(Default)]
+struct WaitLog {
+    last: Option<String>,
+}
+
+impl WaitLog {
+    /// Returns whether `state` differs from the previous round.
+    fn changed(&mut self, state: &str) -> bool {
+        let changed = self.last.as_deref() != Some(state);
+        if changed {
+            self.last = Some(state.to_owned());
+        }
+        changed
+    }
+}
+
 impl SelectWaitAndExecute {
     /// Runs selection, waiting, and execution.
     pub fn execute(&self) -> Result<Exit> {
@@ -118,10 +135,12 @@ impl SelectWaitAndExecute {
             log::error!("{error}");
             return Ok(Exit::Code(ExitCode::from(USAGE_ERROR)));
         }
+        self.warn_slow_probe();
         let count = usize::try_from(self.select.count).unwrap_or(usize::MAX);
         if matches!(self.select.strategy, Strategy::TopologyAware) && count == 1 {
             log::warn!(
-                "`--strategy topology-aware` has no effect with `-k 1`; selecting the first idle GPU"
+                "`--strategy topology-aware` has no effect with `-k 1`; selecting the first idle \
+                 GPU (use `-k 2` or more, or `--strategy first`)"
             );
         }
         let signals = exec::Signals::install()?;
@@ -157,6 +176,7 @@ impl SelectWaitAndExecute {
         }
 
         let mut validated = false;
+        let mut wait_log = WaitLog::default();
         loop {
             if let Some(exit) = self.check_timeout(start) {
                 return Ok(exit);
@@ -174,7 +194,14 @@ impl SelectWaitAndExecute {
             let round = match probed {
                 Ok(usage) => {
                     validated = true;
-                    self.run_round(&usage, count, topology.as_ref(), first, &signals)?
+                    self.run_round(
+                        &usage,
+                        count,
+                        topology.as_ref(),
+                        first,
+                        &mut wait_log,
+                        &signals,
+                    )?
                 }
                 Err(error) if self.execute.dry_run => return Err(error),
                 Err(error) if self.wait.no_wait => {
@@ -192,13 +219,18 @@ impl SelectWaitAndExecute {
                 return Ok(exit);
             }
             if self.wait.no_wait {
-                log::warn!("no matching GPUs available after one attempt");
                 return Ok(Exit::Code(ExitCode::from(TEMPORARY_FAILURE)));
             }
             if let Some(exit) = self.check_timeout(start) {
                 return Ok(exit);
             }
-            if let Some(signal) = signals.sleep(self.next_sleep(start)) {
+            let sleep = self.next_sleep(start);
+            log::debug!(
+                "next probe in {:.1}s{}",
+                sleep.as_secs_f64(),
+                self.remaining_note(start)
+            );
+            if let Some(signal) = signals.sleep(sleep) {
                 return Ok(exec::signal_exit(signal));
             }
         }
@@ -215,16 +247,35 @@ impl SelectWaitAndExecute {
         if let Some(dir) = &self.execute.dir
             && !dir.is_dir()
         {
-            return Some(format!("--dir {} is not a directory", dir.display()));
+            return Some(format!(
+                "--dir {} is not a directory; pass an existing directory",
+                dir.display()
+            ));
         }
         for (key, _) in &self.execute.env {
             if key == "CUDA_VISIBLE_DEVICES" || key == "GQ_CARDS" {
                 return Some(format!(
-                    "--env {key} is reserved: gq sets it for the command"
+                    "--env {key} is reserved: gq sets it for the command, remove it"
                 ));
             }
         }
         None
+    }
+
+    /// Warns when sampling alone cannot fit in the timeout budget.
+    fn warn_slow_probe(&self) {
+        if self.wait.timeout == 0 || self.filter.probe_count <= 1 {
+            return;
+        }
+        let sampling = u64::from(self.filter.probe_count - 1);
+        if sampling >= self.wait.timeout {
+            log::warn!(
+                "`--probe-count {}` cannot fit in `--timeout {}s`; raise --timeout or lower \
+                 --probe-count",
+                self.filter.probe_count,
+                self.wait.timeout
+            );
+        }
     }
 
     /// Handles one successful probe: select and execute.
@@ -234,19 +285,26 @@ impl SelectWaitAndExecute {
         count: usize,
         topology: Option<&Topology>,
         first: bool,
+        wait_log: &mut WaitLog,
         signals: &exec::Signals,
     ) -> Result<Round> {
         let present = usage.iter().map(|(index, _)| index).collect::<Vec<_>>();
         if present.is_empty() {
             bail!("nvidia-smi reported no cards");
         }
-        if first {
-            self.filter.warn_absent(&present);
-        }
         let candidates = usage
             .iter()
             .filter(|(index, _)| self.filter.accepts_index(*index))
             .collect::<Vec<_>>();
+        if first {
+            self.filter.warn_absent(&present);
+            let indices = candidates
+                .iter()
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>();
+            self.filter.log_candidates(&present, &indices);
+            self.filter.log_idle_rule();
+        }
         if let Some(topology) = topology {
             let dimensions = topology.dimensions();
             if let Some(index) = candidates
@@ -261,10 +319,17 @@ impl SelectWaitAndExecute {
             }
         }
         let problem = if candidates.is_empty() {
-            Some(format!("no GPUs match the filter; present: {present:?}"))
-        } else if candidates.len() < count {
             Some(format!(
-                "requested {count} GPUs but only {} match the filter",
+                "no GPUs match the filter; present: {present:?}; check --include/--exclude"
+            ))
+        } else if candidates.len() < count {
+            let hint = if self.filter.has_index_filter() {
+                "lower -k or widen --include/--exclude"
+            } else {
+                "lower -k"
+            };
+            Some(format!(
+                "requested {count} GPUs but only {} candidates are available; {hint} (present: {present:?})",
                 candidates.len()
             ))
         } else {
@@ -275,28 +340,27 @@ impl SelectWaitAndExecute {
                 log::error!("{problem}");
                 return Ok(Round::Done(Exit::Code(ExitCode::from(USAGE_ERROR))));
             }
-            log::warn!("{problem}; waiting");
+            if wait_log.changed(&problem) {
+                log::warn!("{problem}; waiting");
+            } else {
+                log::debug!("{problem}; still waiting");
+            }
             return Ok(Round::Wait);
         }
 
+        for (index, stats) in &candidates {
+            self.filter.log_idle(*index, *stats);
+        }
         let idle = candidates
             .iter()
             .filter(|(_, stats)| self.filter.accepts_usage(*stats))
             .map(|(index, _)| *index)
             .collect::<Vec<_>>();
         let Some(selected) = self.select.select(&candidates, &idle, topology) else {
-            if self.execute.dry_run {
-                println!("no GPUs match the current constraints");
-                return Ok(Round::Done(Exit::Code(ExitCode::from(TEMPORARY_FAILURE))));
-            }
-            log::info!(
-                "waiting: {}/{} candidate GPUs idle; need {count}",
-                idle.len(),
-                candidates.len()
-            );
-            return Ok(Round::Wait);
+            return Ok(self
+                .handle_selection_miss(count, idle.len(), candidates.len(), topology, wait_log)
+                .map_or(Round::Wait, Round::Done));
         };
-        log::debug!("candidates {present:?}; idle {idle:?}; selected {selected:?}");
         if self.execute.dry_run {
             println!("would run on GPUs {}", join_cards(&selected));
             return Ok(Round::Done(Exit::Ok));
@@ -313,6 +377,59 @@ impl SelectWaitAndExecute {
             signals,
         )
         .map(Round::Done)
+    }
+
+    /// Logs a failed selection and reports whether the round must end.
+    fn handle_selection_miss(
+        &self,
+        count: usize,
+        idle: usize,
+        candidates: usize,
+        topology: Option<&Topology>,
+        wait_log: &mut WaitLog,
+    ) -> Option<Exit> {
+        // `run` only passes `count > 1` topology-aware selection a matrix; a
+        // miss with enough idle cards is therefore a target mismatch.
+        let topology_miss = matches!(self.select.strategy, Strategy::TopologyAware)
+            && count > 1
+            && idle >= count
+            && topology.is_some();
+        let state = if topology_miss {
+            format!(
+                "no idle group matches the topology target ({idle} of {candidates} cards idle, \
+                 need {count})"
+            )
+        } else {
+            format!("{idle}/{candidates} candidate GPUs idle; need {count}")
+        };
+        if self.execute.dry_run {
+            if topology_miss {
+                log::info!(
+                    "{state}; `--strategy topology-aware` does not fall back; use \
+                     `--strategy first` to accept the best available group"
+                );
+            }
+            println!("no GPUs match the current constraints");
+            return Some(Exit::Code(ExitCode::from(TEMPORARY_FAILURE)));
+        }
+        let advice = match (topology_miss, self.wait.no_wait) {
+            (false, _) => "",
+            (true, true) => {
+                "; wait for a topology-compatible group by dropping --no-wait, or use \
+                 `--strategy first`"
+            }
+            (true, false) => "; wait for a topology-compatible group, or use `--strategy first`",
+        };
+        if self.wait.no_wait {
+            log::warn!(
+                "no matching GPUs available after one attempt: {state}; --no-wait is set{advice}"
+            );
+        } else if wait_log.changed(&state) {
+            log::info!("waiting: {state}{}{advice}", self.wait_note());
+        } else {
+            log::debug!("waiting: {state}");
+        }
+        None
     }
 
     /// Returns the timeout exit once the deadline has passed.
@@ -337,6 +454,25 @@ impl SelectWaitAndExecute {
         let deadline = Duration::from_secs(self.wait.timeout);
         poll.min(deadline.saturating_sub(start.elapsed()))
     }
+
+    /// Describes the poll and timeout settings for the first wait log.
+    fn wait_note(&self) -> String {
+        let timeout = if self.wait.timeout == 0 {
+            "no timeout".to_owned()
+        } else {
+            format!("timeout {}s", self.wait.timeout)
+        };
+        format!(" (poll {}s, {timeout})", self.wait.poll)
+    }
+
+    /// Describes the remaining timeout budget for per-round debug logs.
+    fn remaining_note(&self, start: Instant) -> String {
+        if self.wait.timeout == 0 {
+            return " (no timeout)".to_owned();
+        }
+        let remaining = Duration::from_secs(self.wait.timeout).saturating_sub(start.elapsed());
+        format!(" ({:.1}s left)", remaining.as_secs_f64())
+    }
 }
 
 /// Formats cards as a comma-separated list.
@@ -347,6 +483,14 @@ fn join_cards(cards: &[usize]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_log_reports_only_state_changes() {
+        let mut log = WaitLog::default();
+        assert!(log.changed("2/4 candidate GPUs idle; need 3"));
+        assert!(!log.changed("2/4 candidate GPUs idle; need 3"));
+        assert!(log.changed("3/4 candidate GPUs idle; need 3"));
+    }
 
     #[test]
     fn parse_env_splits_once_and_rejects_malformed_assignments() {

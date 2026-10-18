@@ -85,6 +85,34 @@ The set of card indices must also be identical between samples. If the set
 changes, the probe round is discarded and immediately sampled once more. A
 count above 60 logs a warning because the samples take about one second each.
 
+## Logging
+
+`gq run` and `gq list` use the same filter logging. On the first successful
+probe, Info reports the idle rule and, when `--include` or `--exclude` is set,
+the effective candidate scope:
+
+```text
+candidates: 6/8 GPUs (--include 0-5)
+idle rule: free VRAM >= 8.0 GiB; utilization <= 5%
+```
+
+Without `--include` or `--exclude`, the `N/N` candidate count moves to Debug
+because it adds no information.
+
+The default 100 MiB used-memory limit is only named when it is in effect. At
+Debug, every candidate is reported as idle or not idle with the tested value
+and the limit actually applied. Percentage limits are converted per card, so
+the byte threshold is visible:
+
+```text
+GPU1: not idle: used VRAM 1024 MiB > 100 MiB
+GPU2: idle (used 5 MiB <= 100 MiB, util 3%)
+GPU3: not idle: used VRAM 1024 MiB > 491 MiB, 1% of total
+```
+
+Indices removed by `--include` or `--exclude` are listed at Debug. Ranges that
+mention absent cards still warn as described above.
+
 ## Filters do not reserve cards
 
 Filtering and probing only observe the cards. They do not lock, claim, or

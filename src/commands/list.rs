@@ -143,25 +143,39 @@ impl List {
             anyhow::bail!("nvidia-smi reported no cards");
         }
         self.filter.warn_absent(&present);
-        let rows = usage
+        let candidates = usage
             .iter()
             .filter(|(index, _)| self.filter.accepts_index(*index))
-            .map(|(index, stats)| Row {
-                index,
-                memory_total_mib: stats.memory_total_mib,
-                memory_used_mib: stats.memory_used_mib,
-                memory_free_mib: stats.memory_free_mib,
-                utilization_percent: stats.utilization_percent,
-                status: if self.filter.accepts_usage(stats) {
-                    "Available"
-                } else {
-                    "In use"
-                },
+            .collect::<Vec<_>>();
+        let indices = candidates
+            .iter()
+            .map(|(index, _)| *index)
+            .collect::<Vec<_>>();
+        self.filter.log_candidates(&present, &indices);
+        self.filter.log_idle_rule();
+        if candidates.is_empty() {
+            anyhow::bail!(
+                "no cards matched the filter; present: {present:?}; check --include/--exclude"
+            );
+        }
+        let rows = candidates
+            .iter()
+            .map(|&(index, stats)| {
+                self.filter.log_idle(index, stats);
+                Row {
+                    index,
+                    memory_total_mib: stats.memory_total_mib,
+                    memory_used_mib: stats.memory_used_mib,
+                    memory_free_mib: stats.memory_free_mib,
+                    utilization_percent: stats.utilization_percent,
+                    status: if self.filter.accepts_usage(stats) {
+                        "Available"
+                    } else {
+                        "In use"
+                    },
+                }
             })
             .collect::<Vec<_>>();
-        if rows.is_empty() {
-            anyhow::bail!("no cards matched the filter");
-        }
         let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
         match self.format {
             OutputMode::Pretty => println!("{}", render_pretty(&rows, color)),

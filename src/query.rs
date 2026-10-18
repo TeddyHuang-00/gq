@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     process::{Command, Stdio},
+    sync::Once,
     time::{Duration, Instant},
 };
 
@@ -224,7 +225,9 @@ impl Topology {
 
     /// Like [`Self::query`], but the probe is bounded by `deadline`.
     pub fn query_with_deadline(deadline: Option<Instant>) -> Result<Self> {
-        Self::parse_command_output(smi(&["topo", "-m"], deadline)?)
+        let topology = Self::parse_command_output(smi(&["topo", "-m"], deadline)?)?;
+        log::debug!("topology: {} GPUs", topology.dimensions());
+        Ok(topology)
     }
 
     pub fn dimensions(&self) -> usize {
@@ -393,12 +396,15 @@ impl AllUsage {
 
     /// Like [`Self::query`], but stops before `deadline` passes.
     pub fn query_with_deadline(probe_count: u16, deadline: Option<Instant>) -> Result<Self> {
+        static PROBE_COUNT_WARNING: Once = Once::new();
         if probe_count > 60 {
-            log::warn!(
-                "probing {probe_count} times takes about {} seconds; 10 or fewer probes is \
-                 recommended",
-                probe_count.saturating_sub(1)
-            );
+            PROBE_COUNT_WARNING.call_once(|| {
+                log::warn!(
+                    "`--probe-count {probe_count}` takes about {} seconds; \
+                    10 or fewer probes is recommended",
+                    probe_count.saturating_sub(1)
+                );
+            });
         }
         match Self::from_probe_outputs(Self::sample(probe_count, deadline)?) {
             Ok(usage) => Ok(usage),

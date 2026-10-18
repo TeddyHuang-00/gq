@@ -56,7 +56,11 @@ impl Select {
             return None;
         }
         match self.strategy {
-            Strategy::First => Some(idle[..count].to_vec()),
+            Strategy::First => {
+                let selected = idle[..count].to_vec();
+                log::debug!("strategy first: selected the lowest-index idle cards {selected:?}");
+                Some(selected)
+            }
             Strategy::MinUsed => {
                 let usage = candidates.iter().copied().collect::<BTreeMap<_, _>>();
                 let mut ranked = idle
@@ -69,6 +73,17 @@ impl Select {
                         .total_cmp(&right.1.memory_used_mib)
                         .then_with(|| left.0.cmp(&right.0))
                 });
+                log::debug!(
+                    "strategy min-used: ranking idle GPUs by used VRAM: {}",
+                    ranked
+                        .iter()
+                        .map(|(index, stats)| format!(
+                            "GPU{index}={:.0} MiB",
+                            stats.memory_used_mib
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
                 let mut selected = ranked
                     .into_iter()
                     .take(count)
@@ -79,22 +94,53 @@ impl Select {
             }
             // One card has no pairs to score, so topology-aware degenerates to
             // `first` and needs no matrix.
-            Strategy::TopologyAware if count == 1 => Some(vec![idle[0]]),
+            Strategy::TopologyAware if count == 1 => {
+                log::debug!(
+                    "strategy topology-aware: one card has no pairs to score; selecting the first idle GPU{}",
+                    idle[0]
+                );
+                Some(vec![idle[0]])
+            }
             Strategy::TopologyAware => {
-                let topology = topology?;
-                let target = candidates
+                let Some(topology) = topology else {
+                    log::debug!(
+                        "strategy topology-aware: no topology matrix for a {count}-card group"
+                    );
+                    return None;
+                };
+                let Some(target) = candidates
                     .iter()
                     .map(|(index, _)| *index)
                     .combinations(count)
                     .map(|combination| combination_score(topology, &combination))
-                    .max_by(|left, right| compare_scores(*left, *right))?;
-                idle.iter()
+                    .max_by(|left, right| compare_scores(*left, *right))
+                else {
+                    log::debug!("strategy topology-aware: no candidate group to score");
+                    return None;
+                };
+                log::debug!(
+                    "strategy topology-aware: target (minimum pair, sum) = ({:.3}, {:.3})",
+                    target.0,
+                    target.1
+                );
+                let selected = idle
+                    .iter()
                     .copied()
                     .combinations(count)
                     .find(|combination| {
                         compare_scores(combination_score(topology, combination), target)
                             == Ordering::Equal
-                    })
+                    });
+                if let Some(combination) = &selected {
+                    log::debug!(
+                        "strategy topology-aware: selected {combination:?} matching the target"
+                    );
+                } else {
+                    log::debug!(
+                        "strategy topology-aware: no idle group matches the target; not falling back"
+                    );
+                }
+                selected
             }
         }
     }

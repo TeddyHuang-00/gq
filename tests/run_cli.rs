@@ -370,6 +370,44 @@ fn topology_aware_waits_for_max_score_group() -> Result<()> {
 }
 
 #[test]
+fn topology_target_mismatch_is_explained() -> Result<()> {
+    let dir = TempDir::new("topo-target")?;
+    let topo = [
+        "GPU0 GPU1 GPU2 GPU3",
+        "GPU0 X NV8 SYS SYS",
+        "GPU1 NV8 X SYS SYS",
+        "GPU2 SYS SYS X SYS",
+        "GPU3 SYS SYS SYS X",
+    ];
+    // The best pair (0,1) is busy; the idle pair (2,3) does not match the
+    // target, so selection fails even though two cards are idle.
+    let stub = write_stub(&dir, &[(0, true), (1, true), (2, false), (3, false)], &topo)?;
+    let output = run(
+        &stub,
+        &[
+            "run",
+            "--no-wait",
+            "-k",
+            "2",
+            "--strategy",
+            "topology-aware",
+            "--",
+            "true",
+        ],
+    )?;
+    let stderr = text(&output.stderr);
+
+    assert_eq!(code(&output), 75, "stderr: {stderr}");
+    assert!(stderr.contains("topology target"), "stderr: {stderr}");
+    assert!(stderr.contains("--strategy first"), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("candidate GPUs idle; need 2"),
+        "stderr: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
 fn topology_aware_one_card_warns_and_ignores_topology() -> Result<()> {
     let dir = TempDir::new("topo-one")?;
     let stub = write_failing_topo_stub(&dir, &[(0, false), (1, false)])?;

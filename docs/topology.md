@@ -57,8 +57,8 @@ and the sum breaks ties. The target is computed from all candidates, including
 busy cards, before idleness is considered.
 
 A combination of one card has no pairs. `-k 1` is handled separately: it selects
-the first idle card and warns that topology-aware has no effect. No topology
-query is made.
+the first idle card and warns that topology-aware has no effect, suggesting
+`-k 2` or more or `--strategy first`. No topology query is made.
 
 ## Eligibility and ties
 
@@ -69,6 +69,15 @@ score and the sum are equal. There is no fallback to a lower-scoring group.
 If several idle combinations have exactly the target score, the first one in
 ascending index order is selected. Since idle indices are sorted and
 combinations are generated in that order, this is the lowest-index combination.
+
+At Debug, `gq` logs the candidate target tuple and then either the selected
+combination or that no idle combination matched it. A mismatch is not a
+fallback: it waits for a later probe, exits 75 under `--no-wait`, or prints the
+no-match message under `--dry-run`. The wait message at Info and the `--no-wait`
+warning name the topology target rather than an idle shortage, and suggest
+`--strategy first` or waiting for a compatible group. `--dry-run` keeps its
+stdout line `no GPUs match the current constraints` for scripts and explains
+the target mismatch on stderr.
 
 The target is recomputed on every probe round from the candidates that remain.
 The topology matrix itself is queried once at startup. If a candidate index is
