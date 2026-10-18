@@ -22,15 +22,7 @@ mod units;
 mod writer;
 
 fn main() -> io::Result<()> {
-    for path in [
-        "src/commands",
-        "src/options",
-        "src/query.rs",
-        "src/units",
-        "src/writer",
-    ] {
-        println!("cargo::rerun-if-changed={path}");
-    }
+    println!("cargo::rerun-if-changed=src");
 
     let out_dir = env::var_os("OUT_DIR")
         .map(PathBuf::from)
