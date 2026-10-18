@@ -1,38 +1,49 @@
-/// Render rows of text fields as CSV, quoting and escaping each field as
-/// needed.
-pub fn render<I, R, C>(rows: I) -> String
+//! Render records as CSV, quoting and escaping fields as needed.
+
+use anyhow::{Context, Result};
+use serde::Serialize;
+
+/// Renders `headers` and `rows` as CSV, one record per line.
+pub fn render<H, T>(headers: H, rows: &[T]) -> Result<String>
 where
-    I: IntoIterator<Item = R>,
-    R: IntoIterator<Item = C>,
-    C: AsRef<str>,
+    H: IntoIterator,
+    H::Item: AsRef<str>,
+    T: Serialize,
 {
-    let mut output = String::new();
+    let mut writer = csv::WriterBuilder::new()
+        .has_headers(false)
+        .from_writer(Vec::new());
+    let headers = headers
+        .into_iter()
+        .map(|field| field.as_ref().to_owned())
+        .collect::<Vec<_>>();
+    writer.write_record(&headers)?;
     for row in rows {
-        let mut first = true;
-        for cell in row {
-            if !first {
-                output.push(',');
-            }
-            first = false;
-            let value = cell.as_ref();
-            if value.contains([',', '"', '\n', '\r']) {
-                output.push('"');
-                output.push_str(&value.replace('"', "\"\""));
-                output.push('"');
-            } else {
-                output.push_str(value);
-            }
-        }
-        output.push('\n');
+        writer.serialize(row)?;
     }
-    output
+    let bytes = writer.into_inner().context("cannot flush CSV output")?;
+    String::from_utf8(bytes).context("CSV output is not UTF-8")
 }
 
 #[cfg(test)]
 mod tests {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct Row {
+        index: usize,
+        name: &'static str,
+    }
+
     #[test]
-    fn renders_generic_rows_and_escapes_fields() {
-        let rows = [["index", "name"], ["1", "a,\"b"]];
-        assert_eq!(super::render(rows), "index,name\n1,\"a,\"\"b\"\n");
+    fn renders_headers_and_serialized_rows() {
+        let rows = [Row {
+            index: 1,
+            name: "a,\"b",
+        }];
+        assert_eq!(
+            super::render(["index", "name"], &rows).unwrap_or_else(|err| panic!("{err}")),
+            "index,name\n1,\"a,\"\"b\"\n"
+        );
     }
 }

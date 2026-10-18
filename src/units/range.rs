@@ -2,17 +2,6 @@
 
 use std::{fmt, ops::Range};
 
-use nom::{
-    IResult, Parser,
-    branch::alt,
-    character::complete::{char, digit1},
-    combinator::{all_consuming, cut, map},
-    error::{ErrorKind as NomErrorKind, ParseError},
-    sequence::separated_pair,
-};
-
-type Parsed<'a, T> = IResult<&'a str, T, ParseFailure<'a>>;
-
 /// Parse one inclusive GPU index range into Rust's half-open range type.
 ///
 /// A single index such as `3` becomes `3..4`; `0-3` becomes `0..4`.
@@ -21,11 +10,14 @@ pub fn parse(input: &str) -> Result<Range<usize>, RangeError> {
     if input.is_empty() {
         return Err(RangeError::new(input, 0, ErrorKind::Empty));
     }
-
-    let mut parser = all_consuming(alt((span, map(index, |value| (value, value)))));
-    let (start, end) = match parser.parse(input) {
-        Ok((_, range)) => range,
-        Err(error) => return Err(RangeError::from_nom(input, &error)),
+    let (start, end) = if let Some((start, rest)) = input.split_once('-') {
+        (
+            index(start, input, 0)?,
+            index(rest, input, start.len() + 1)?,
+        )
+    } else {
+        let value = index(input, input, 0)?;
+        (value, value)
     };
     if start > end {
         return Err(RangeError::new(
@@ -40,55 +32,29 @@ pub fn parse(input: &str) -> Result<Range<usize>, RangeError> {
     Ok(start..exclusive_end)
 }
 
-fn index(input: &str) -> Parsed<'_, usize> {
-    let (rest, digits) = digit1(input)?;
-    digits.parse().map_or(
-        Err(nom::Err::Failure(ParseFailure {
-            input,
-            kind: ErrorKind::IndexTooLarge,
-        })),
-        |value| Ok((rest, value)),
-    )
-}
-
-fn span(input: &str) -> Parsed<'_, (usize, usize)> {
-    separated_pair(index, char('-'), cut(index)).parse(input)
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ParseFailure<'a> {
-    input: &'a str,
-    kind: ErrorKind,
-}
-
-impl<'a> ParseError<&'a str> for ParseFailure<'a> {
-    fn from_error_kind(input: &'a str, kind: NomErrorKind) -> Self {
-        let kind = match kind {
-            NomErrorKind::Digit => ErrorKind::ExpectedIndex,
-            NomErrorKind::Eof => ErrorKind::UnexpectedTrailing,
-            _ => ErrorKind::ExpectedRange,
-        };
-        Self { input, kind }
+/// Parses one digit run, reporting errors at `offset` in the whole input.
+fn index(text: &str, input: &str, offset: usize) -> Result<usize, RangeError> {
+    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return Err(RangeError::new(input, offset, ErrorKind::ExpectedIndex));
     }
-
-    fn append(_input: &'a str, _kind: NomErrorKind, other: Self) -> Self {
-        other
+    let value = text[..digits]
+        .parse()
+        .map_err(|_| RangeError::new(input, offset, ErrorKind::IndexTooLarge))?;
+    if digits == text.len() {
+        return Ok(value);
     }
-
-    fn or(self, other: Self) -> Self {
-        if other.input.len() < self.input.len() {
-            other
-        } else {
-            self
-        }
-    }
+    Err(RangeError::new(
+        input,
+        offset + digits,
+        ErrorKind::UnexpectedTrailing,
+    ))
 }
 
 #[derive(Clone, Copy, Debug)]
 enum ErrorKind {
     Empty,
     ExpectedIndex,
-    ExpectedRange,
     UnexpectedTrailing,
     IndexTooLarge,
     Reversed { start: usize, end: usize },
@@ -111,17 +77,6 @@ impl RangeError {
             kind,
         }
     }
-
-    fn from_nom(input: &str, error: &nom::Err<ParseFailure<'_>>) -> Self {
-        let failure = match error {
-            nom::Err::Error(failure) | nom::Err::Failure(failure) => failure,
-            nom::Err::Incomplete(_) => {
-                return Self::new(input, input.len(), ErrorKind::ExpectedIndex);
-            }
-        };
-        let offset = input.len() - failure.input.len();
-        Self::new(input, offset, failure.kind)
-    }
 }
 
 impl fmt::Display for RangeError {
@@ -141,7 +96,6 @@ impl fmt::Display for RangeError {
         let message = match kind {
             ErrorKind::Empty => return f.write_str("range is empty"),
             ErrorKind::ExpectedIndex => "expected a GPU index",
-            ErrorKind::ExpectedRange => "expected `-` between GPU indices",
             ErrorKind::UnexpectedTrailing => "unexpected trailing characters",
             ErrorKind::IndexTooLarge => "GPU index too large",
             ErrorKind::Reversed { .. } => unreachable!(),

@@ -44,12 +44,7 @@ impl Topology {
             }
             OutputMode::Csv => {
                 let rows = link_rows(n, |a, b| topology.connection(a, b));
-                print!(
-                    "{}",
-                    writer::csv::render(
-                        std::iter::once(CSV_HEADER).chain(rows.iter().map(LinkRow::fields))
-                    )
-                );
+                print!("{}", writer::csv::render(CSV_HEADER, &rows)?);
             }
         }
         Ok(Exit::Ok)
@@ -58,22 +53,12 @@ impl Topology {
 
 const CSV_HEADER: [&str; 4] = ["card a", "card b", "link", "quality"];
 
+#[derive(serde::Serialize)]
 struct LinkRow {
     card_a: String,
     card_b: String,
     link: String,
     quality: String,
-}
-
-impl LinkRow {
-    const fn fields(&self) -> [&str; 4] {
-        [
-            self.card_a.as_str(),
-            self.card_b.as_str(),
-            self.link.as_str(),
-            self.quality.as_str(),
-        ]
-    }
 }
 
 fn link_rows(
@@ -226,13 +211,14 @@ mod tests {
     ];
 
     #[test]
-    fn csv_rows_emit_each_card_pair_once_with_link_grading() {
+    fn csv_emits_each_card_pair_once_with_link_grading() {
         let rows = link_rows(3, |a, b| LINKS[a][b]);
 
+        let Ok(csv) = writer::csv::render(CSV_HEADER, &rows) else {
+            panic!("link rows must serialize");
+        };
         assert_eq!(
-            writer::csv::render(
-                std::iter::once(CSV_HEADER).chain(rows.iter().map(LinkRow::fields))
-            ),
+            csv,
             "card a,card b,link,quality\nGPU0,GPU1,NV4,High\nGPU0,GPU2,SYS,Low\nGPU1,GPU2,NODE,Medium\n"
         );
     }

@@ -2,13 +2,6 @@
 
 use std::fmt;
 
-use nom::{
-    IResult, Parser,
-    character::complete::{char, digit1},
-    combinator::{opt, recognize},
-    sequence::preceded,
-};
-
 /// A VRAM threshold: an absolute byte size or a percentage of total memory.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Vram {
@@ -38,8 +31,9 @@ impl Vram {
             return Err(ValueError::new(input, 0, "size must not be negative"));
         }
 
-        let (rest, token) =
-            number(input).map_err(|_| ValueError::new(input, 0, "expected a number"))?;
+        let Some((token, rest)) = number(input) else {
+            return Err(ValueError::new(input, 0, "expected a number"));
+        };
         let offset = input.len() - rest.len();
 
         if let Some(tail) = rest.strip_prefix('%') {
@@ -78,8 +72,9 @@ impl Percent {
             return Err(ValueError::new(input, 0, "percentage must not be negative"));
         }
 
-        let (rest, token) =
-            number(input).map_err(|_| ValueError::new(input, 0, "expected a number"))?;
+        let Some((token, rest)) = number(input) else {
+            return Err(ValueError::new(input, 0, "expected a number"));
+        };
         let rest = rest.strip_prefix('%').unwrap_or(rest);
         if !rest.is_empty() {
             let message = if rest.starts_with('%') {
@@ -93,9 +88,24 @@ impl Percent {
     }
 }
 
-/// Match an unsigned decimal number, returning the matched text.
-fn number(input: &str) -> IResult<&str, &str> {
-    recognize((digit1, opt(preceded(char('.'), digit1)))).parse(input)
+/// Split an unsigned decimal number from the rest of the input.
+fn number(input: &str) -> Option<(&str, &str)> {
+    let digits = input
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(input.len());
+    if digits == 0 {
+        return None;
+    }
+    let mut end = digits;
+    if let Some(fraction) = input[digits..].strip_prefix('.') {
+        let length = fraction
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(fraction.len());
+        if length > 0 {
+            end = digits + 1 + length;
+        }
+    }
+    Some((&input[..end], &input[end..]))
 }
 
 /// Binary multiplier for a size suffix, case-insensitive.

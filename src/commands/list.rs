@@ -77,36 +77,10 @@ impl List {
         match self.format {
             OutputMode::Pretty => println!("{}", Table::new(rows)),
             OutputMode::Json => println!("{}", writer::json::render(&rows)?),
-            OutputMode::Csv => print!("{}", writer::csv::render(csv_rows(&rows))),
+            OutputMode::Csv => print!("{}", writer::csv::render(Row::headers(), &rows)?),
         }
         Ok(Exit::Ok)
     }
-}
-
-fn csv_rows(rows: &[Row]) -> Vec<Vec<String>> {
-    let mut output = vec![
-        [
-            "index",
-            "memory_total_mib",
-            "memory_used_mib",
-            "memory_free_mib",
-            "utilization_percent",
-            "status",
-        ]
-        .map(str::to_owned)
-        .to_vec(),
-    ];
-    output.extend(rows.iter().map(|row| {
-        vec![
-            row.index.to_string(),
-            row.memory_total_mib.to_string(),
-            row.memory_used_mib.to_string(),
-            row.memory_free_mib.to_string(),
-            row.utilization_percent.to_string(),
-            row.status.to_owned(),
-        ]
-    }));
-    output
 }
 
 #[cfg(test)]
@@ -136,8 +110,9 @@ mod tests {
             100.0
         );
         assert_eq!(
-            writer::csv::render(csv_rows(&rows)),
-            "index,memory_total_mib,memory_used_mib,memory_free_mib,utilization_percent,status\n2,100,25.5,74.5,12,In use\n"
+            writer::csv::render(Row::headers(), &rows)
+                .unwrap_or_else(|err| panic!("Failed to write csv: {err}")),
+            "index,memory_total_mib,memory_used_mib,memory_free_mib,utilization_percent,status\n2,100.0,25.5,74.5,12.0,In use\n"
         );
     }
 }
