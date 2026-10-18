@@ -1,0 +1,83 @@
+# Based on typst's release action:
+# https://github.com/typst/typst/blob/main/.github/workflows/release.yml
+
+name: Build Release Binaries
+on:
+  release:
+    types: [published]
+
+env:
+  TARGET: x86_64-unknown-linux-musl
+
+jobs:
+  build-release:
+    name: release x86_64-unknown-linux-musl
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Cross-Compilation Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ env.TARGET }}
+
+      - name: Run Build
+        run: cargo build --locked --release --target ${{ env.TARGET }}
+
+      - name: Setup python for checksums
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - name: Create artifact directory
+        shell: bash
+        run: |
+          directory=gq-${{ env.TARGET }}
+          build_dir=target/${{ env.TARGET }}/release
+          # build.rs may write to target/<profile> rather than target/<target>/<profile>.
+          [ -d "$build_dir/completions" ] || build_dir=target/release
+
+          mkdir "$directory"
+          cp README.md "$directory"
+          [ ! -d docs ] || cp -r docs "$directory"
+          cp -r "$build_dir/completions" "$directory"
+          cp -r "$build_dir/man" "$directory"
+          cp "$build_dir/gq" "$directory"
+
+          tar cJf "$directory.tar.xz" "$directory"
+          python3 -c "import hashlib; open('$directory.tar.xz.sha256', 'w').write(hashlib.file_digest(open('$directory.tar.xz', 'rb'), 'sha256').hexdigest())"
+
+          # Keep the loose completions/manpage for separate upload.
+          mkdir -p artifacts
+          cp -r "$build_dir/completions" "$build_dir/man" artifacts/
+
+      - name: Upload Release
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          artifacts: "gq-${{ env.TARGET }}.*"
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+
+      - name: Upload Shell Completion
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          artifacts: "artifacts/completions/*"
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+
+      - name: Upload Manpage
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          artifacts: "artifacts/man/*"
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
