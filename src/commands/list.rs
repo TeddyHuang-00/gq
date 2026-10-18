@@ -9,7 +9,7 @@ use serde::Serialize;
 use tabled::{
     Table, Tabled,
     builder::Builder,
-    settings::{Color, Style},
+    settings::{Alignment, Color, Style, object::Rows},
 };
 
 use super::Exit;
@@ -33,24 +33,16 @@ pub struct List {
 #[derive(Serialize, Tabled)]
 struct Row {
     index: usize,
-    #[tabled(display = "pretty_number")]
     memory_total_mib: f64,
-    #[tabled(display = "pretty_number")]
     memory_used_mib: f64,
-    #[tabled(display = "pretty_number")]
     memory_free_mib: f64,
-    #[tabled(display = "pretty_number")]
     utilization_percent: f64,
     status: &'static str,
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn pretty_number(value: &f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        format!("{value:.1}")
-    }
+/// Formats MiB as gigabytes (`GB = MiB / 1024`) with one decimal.
+fn gb(mib: f64) -> String {
+    format!("{:.1}", mib / 1024.0)
 }
 
 /// Width in display columns of the merged used/free VRAM bar.
@@ -60,8 +52,8 @@ const UTIL_BAR_WIDTH: usize = 10;
 /// Pretty table headers, in column order.
 const HEADERS: [&str; 5] = [
     "Index",
-    "Total VRAM",
-    "Used/Free VRAM",
+    "Total VRAM (GB)",
+    "Used/Free VRAM (GB)",
     "Utilization",
     "Status",
 ];
@@ -97,19 +89,11 @@ fn vram_bar(used: f64, free: f64, color: bool) -> String {
         VRAM_BAR_WIDTH / 2
     };
     let free_width = VRAM_BAR_WIDTH - used_width;
-    let mut used_segment = centered_segment(
-        &pretty_number(&used),
-        used_width,
-        if color { ' ' } else { '█' },
-    );
-    let mut free_segment = centered_segment(
-        &pretty_number(&free),
-        free_width,
-        if color { ' ' } else { '░' },
-    );
+    let mut used_segment = centered_segment(&gb(used), used_width, if color { ' ' } else { '█' });
+    let mut free_segment = centered_segment(&gb(free), free_width, if color { ' ' } else { '░' });
     if color {
-        used_segment = Color::BG_RED.colorize(Color::FG_WHITE.colorize(&used_segment));
-        free_segment = Color::BG_BLUE.colorize(Color::FG_WHITE.colorize(&free_segment));
+        used_segment = Color::BG_BRIGHT_RED.colorize(Color::FG_BLACK.colorize(&used_segment));
+        free_segment = Color::BG_BRIGHT_GREEN.colorize(Color::FG_BLACK.colorize(&free_segment));
     }
     format!("{used_segment}{free_segment}")
 }
@@ -126,12 +110,12 @@ fn utilization_cell(percent: f64) -> String {
     )
 }
 
-fn print_pretty(rows: &[Row], color: bool) {
+fn render_pretty(rows: &[Row], color: bool) -> String {
     let mut table_rows = vec![HEADERS.map(str::to_owned).to_vec()];
     table_rows.extend(rows.iter().map(|row| {
         vec![
             row.index.to_string(),
-            pretty_number(&row.memory_total_mib),
+            gb(row.memory_total_mib),
             vram_bar(row.memory_used_mib, row.memory_free_mib, color),
             utilization_cell(row.utilization_percent),
             row.status.to_owned(),
@@ -139,7 +123,8 @@ fn print_pretty(rows: &[Row], color: bool) {
     }));
     let mut table = Table::from(Builder::from(table_rows));
     table.with(Style::modern());
-    println!("{table}");
+    table.modify(Rows::first(), Alignment::center());
+    table.to_string()
 }
 
 impl List {
@@ -171,7 +156,7 @@ impl List {
         }
         let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
         match self.format {
-            OutputMode::Pretty => print_pretty(&rows, color),
+            OutputMode::Pretty => println!("{}", render_pretty(&rows, color)),
             OutputMode::Json => println!("{}", writer::json::render(&rows)?),
             OutputMode::Csv => print!("{}", writer::csv::render(Row::headers(), &rows)?),
         }
@@ -211,12 +196,47 @@ mod tests {
             HEADERS,
             [
                 "Index",
-                "Total VRAM",
-                "Used/Free VRAM",
+                "Total VRAM (GB)",
+                "Used/Free VRAM (GB)",
                 "Utilization",
                 "Status"
             ]
         );
+    }
+
+    #[test]
+    fn gb_formats_mib_with_one_decimal() {
+        assert_eq!(gb(32_607.0), "31.8");
+        assert_eq!(gb(6_810.0), "6.7");
+        assert_eq!(gb(1024.0), "1.0");
+        assert_eq!(gb(0.0), "0.0");
+    }
+
+    #[test]
+    fn header_row_is_centered() {
+        let rows = [Row {
+            index: 0,
+            memory_total_mib: 32_607.0,
+            memory_used_mib: 6_809.0,
+            memory_free_mib: 25_391.0,
+            utilization_percent: 15.0,
+            status: "Available",
+        }];
+        let table = render_pretty(&rows, false);
+        let header = table
+            .lines()
+            .find(|line| line.contains("Index"))
+            .unwrap_or_else(|| panic!("no header line in {table:?}"));
+        let cells = header.split('│').collect::<Vec<_>>();
+        assert_eq!(cells[1].trim(), "Index");
+        assert_eq!(cells[2].trim(), "Total VRAM (GB)");
+        assert_eq!(cells[3].trim(), "Used/Free VRAM (GB)");
+        assert_eq!(cells[4].trim(), "Utilization");
+        assert_eq!(cells[5].trim(), "Status");
+        // "Utilization" is 11 columns in a 15-column cell: two spaces each
+        // side plus the one-column padding. Left alignment would put one
+        // space on the left and five on the right.
+        assert_eq!(cells[4], "   Utilization   ");
     }
 
     #[test]
@@ -235,27 +255,38 @@ mod tests {
 
     #[test]
     fn vram_segments_are_proportional_and_centered() {
-        let cell = strip_ansi(&vram_bar(50.0, 50.0, false));
+        let cell = strip_ansi(&vram_bar(1024.0, 1024.0, false));
         let chars = cell.chars().collect::<Vec<_>>();
-        // "50" centered in each 10-wide segment: 4 fill, 2 digits, 4 fill.
+        // "1.0" centered in each 10-wide segment: 3 fill, 3 digits, 4 fill.
         let (used, free) = chars.split_at(10);
-        assert_eq!(used.iter().collect::<String>(), "████50████");
-        assert_eq!(free.iter().collect::<String>(), "░░░░50░░░░");
-        assert_eq!(run_len(&chars, '█'), 8);
-        assert_eq!(run_len(&chars, '░'), 8);
+        assert_eq!(used.iter().collect::<String>(), "███1.0████");
+        assert_eq!(free.iter().collect::<String>(), "░░░1.0░░░░");
+        assert_eq!(run_len(&chars, '█'), 7);
+        assert_eq!(run_len(&chars, '░'), 7);
 
-        // 30 of 100 MiB: six used columns, fourteen free.
-        let chars = strip_ansi(&vram_bar(30.0, 70.0, false))
+        // 30 of 100 GiB: six used columns, fourteen free.
+        let chars = strip_ansi(&vram_bar(3072.0, 7168.0, false))
             .chars()
             .collect::<Vec<_>>();
-        assert_eq!(chars[..6].iter().collect::<String>(), "██30██");
-        assert_eq!(chars[6..].iter().collect::<String>(), "░░░░░░70░░░░░░");
+        assert_eq!(chars[..6].iter().collect::<String>(), "█3.0██");
+        assert_eq!(chars[6..].iter().collect::<String>(), "░░░░░7.0░░░░░░");
 
-        let colored = strip_ansi(&vram_bar(25.0, 75.0, true));
+        let colored = strip_ansi(&vram_bar(512.0, 1536.0, true));
         let chars = colored.chars().collect::<Vec<_>>();
         assert_eq!(chars.len(), VRAM_BAR_WIDTH);
         assert_eq!(chars.iter().filter(|c| c.is_ascii_digit()).count(), 4);
-        assert!(colored.starts_with(" 25  "));
+        assert!(colored.starts_with(" 0.5 "), "colored={colored:?}");
+    }
+
+    #[test]
+    fn colored_bar_uses_black_on_bright_backgrounds() {
+        let cell = vram_bar(1024.0, 3072.0, true);
+        for code in ["\u{1b}[101m", "\u{1b}[102m", "\u{1b}[30m"] {
+            assert!(cell.contains(code), "missing {code:?} in {cell:?}");
+        }
+        for code in ["\u{1b}[37m", "\u{1b}[97m"] {
+            assert!(!cell.contains(code), "unexpected {code:?} in {cell:?}");
+        }
     }
 
     #[test]
