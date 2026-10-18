@@ -34,9 +34,10 @@ fn main() -> ExitCode {
         log::LevelFilter::Off
     } else {
         match args.verbose {
-            0 => log::LevelFilter::Info,
-            1 => log::LevelFilter::Debug,
-            2.. => log::LevelFilter::Trace,
+            0 => log::LevelFilter::Warn,
+            1 => log::LevelFilter::Info,
+            2 => log::LevelFilter::Debug,
+            3.. => log::LevelFilter::Trace,
         }
     };
     let colors = stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();

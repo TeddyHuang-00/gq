@@ -54,9 +54,10 @@ pub enum Commands {
 pub struct Cli {
     /// Set the log verbosity level
     ///
-    /// - 0 = Info (default)
-    /// - 1 = Debug
-    /// - 2 = Trace
+    /// - 0 = Warn (default)
+    /// - 1 = Info
+    /// - 2 = Debug
+    /// - 3+ = Trace
     #[arg(
         short,
         long,

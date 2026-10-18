@@ -17,7 +17,7 @@ flowchart TD
 
 | Option | Default | Meaning |
 |---|---|---|
-| `-v, --verbose` | Info | Increase log verbosity. Repeat for more detail: `-v` is Debug and `-vv` is Trace. |
+| `-v, --verbose` | Warn | Increase log verbosity. `-v` is Info, `-vv` is Debug, and `-vvv` is Trace (further repeats stay Trace). |
 | `-q, --quiet` | off | Disable all logging. Conflicts with `--verbose`. Data still prints. |
 | `-h, --help` | | Print help. |
 | `-V, --version` | | Print the version. |
@@ -123,13 +123,15 @@ stdout. A running child inherits gq's standard input, output, and error.
 Logs are written to stderr with timestamps and levels. Data and decisions are
 written to stdout.
 
-- Default level is Info: idle thresholds, wait reasons, starting cards, and
-  warnings about degraded or contradictory requests. The effective candidate
-  scope is logged at Info when `--include` or `--exclude` is set.
-- `-v` enables Debug: excluded indices, the unfiltered `N/N` candidate count,
+- Default level is Warn: warnings and errors only, such as degraded or
+  contradictory requests, probe failures, and candidate shortfalls.
+- `-v` enables Info: idle thresholds, wait reasons, starting cards, and the
+  effective candidate scope when `--include` or `--exclude` is set.
+- `-vv` enables Debug: excluded indices, the unfiltered `N/N` candidate count,
   per-GPU idle decisions with the computed threshold, selection ranking and
   topology target tuples, and the next probe delay with the remaining timeout.
-- `-vv` enables Trace, including full `nvidia-smi` output.
+- `-vvv` enables Trace, including full `nvidia-smi` output. Further repeats stay
+  at Trace.
 - `-q` disables logging entirely.
 - `RUST_LOG` can override the level unless `-q` is used.
 - Color is used only when stderr is a terminal and `NO_COLOR` is unset.

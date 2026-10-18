@@ -121,7 +121,8 @@ candidate shortfall after the first successful probe logs at Warn. A probe
 failure is a separate event and warns on every round, so a flaky probe stays
 visible. Each Debug round also reports the next probe delay and the remaining
 timeout budget with one decimal, so a long wait is traceable without repeating
-the same Info line every poll.
+the same Info line every poll. Info requires `-v` and Debug requires `-vv`;
+the default Warn level only shows warnings and errors.
 
 When `--strategy topology-aware` misses because the best-connected group is
 busy, the Info or `--no-wait` warning names the topology target mismatch instead

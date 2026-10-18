@@ -175,6 +175,29 @@ fn send_sigterm(child: &Child) -> Result<()> {
 }
 
 #[test]
+fn default_log_level_hides_info_and_verbose_shows_it() -> Result<()> {
+    let dir = TempDir::new("log-level")?;
+    let stub = write_stub(&dir, &[(0, false)], &[])?;
+
+    let default = run(&stub, &["list"])?;
+    assert_eq!(code(&default), 0, "stderr: {}", text(&default.stderr));
+    assert!(
+        !text(&default.stderr).contains("idle rule"),
+        "stderr: {}",
+        text(&default.stderr)
+    );
+
+    let verbose = run(&stub, &["-v", "list"])?;
+    assert_eq!(code(&verbose), 0, "stderr: {}", text(&verbose.stderr));
+    assert!(
+        text(&verbose.stderr).contains("idle rule"),
+        "stderr: {}",
+        text(&verbose.stderr)
+    );
+    Ok(())
+}
+
+#[test]
 fn dry_run_selects_without_executing() -> Result<()> {
     let dir = TempDir::new("dry-run")?;
     let stub = write_stub(&dir, &[(0, false)], &[])?;

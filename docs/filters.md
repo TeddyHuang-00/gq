@@ -97,7 +97,8 @@ idle rule: free VRAM >= 8.0 GiB; utilization <= 5%
 ```
 
 Without `--include` or `--exclude`, the `N/N` candidate count moves to Debug
-because it adds no information.
+because it adds no information. Info requires `-v` and Debug requires `-vv`;
+the default Warn level only shows warnings and errors.
 
 The default 100 MiB used-memory limit is only named when it is in effect. At
 Debug, every candidate is reported as idle or not idle with the tested value
