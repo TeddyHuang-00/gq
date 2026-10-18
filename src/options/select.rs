@@ -5,7 +5,10 @@ use std::{cmp::Ordering, collections::BTreeMap};
 use clap::{Args, ValueEnum};
 use itertools::Itertools;
 
-use crate::query::{Topology, UsageInfo};
+use crate::{
+    query::{Topology, UsageInfo},
+    score::LinkProfile,
+};
 
 /// Card ordering strategy when selecting cards.
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -50,6 +53,7 @@ impl Select {
         candidates: &[(usize, UsageInfo)],
         idle: &[usize],
         topology: Option<&Topology>,
+        profile: &LinkProfile,
     ) -> Option<Vec<usize>> {
         let count = usize::try_from(self.count).ok()?;
         if idle.len() < count {
@@ -112,7 +116,7 @@ impl Select {
                     .iter()
                     .map(|(index, _)| *index)
                     .combinations(count)
-                    .map(|combination| combination_score(topology, &combination))
+                    .map(|combination| combination_score(topology, &combination, profile))
                     .max_by(|left, right| compare_scores(*left, *right))
                 else {
                     log::debug!("strategy topology-aware: no candidate group to score");
@@ -128,7 +132,7 @@ impl Select {
                     .copied()
                     .combinations(count)
                     .find(|combination| {
-                        compare_scores(combination_score(topology, combination), target)
+                        compare_scores(combination_score(topology, combination, profile), target)
                             == Ordering::Equal
                     });
                 if let Some(combination) = &selected {
@@ -150,11 +154,15 @@ impl Select {
 /// its pairwise link scores.
 ///
 /// A combination with no pairs (`count` of 1) scores `(INFINITY, 0.0)`.
-fn combination_score(topology: &Topology, combination: &[usize]) -> (f64, f64) {
+fn combination_score(
+    topology: &Topology,
+    combination: &[usize],
+    profile: &LinkProfile,
+) -> (f64, f64) {
     let mut scores = combination
         .iter()
         .array_combinations::<2>()
-        .map(|[left, right]| topology.connection(*left, *right).default_score())
+        .map(|[left, right]| profile.score(topology.connection(*left, *right)))
         .collect::<Vec<_>>();
     if scores.is_empty() {
         return (f64::INFINITY, 0.0);
@@ -213,14 +221,24 @@ mod tests {
     #[test]
     fn picks_the_lowest_idle_indices_first() {
         let candidates = cards(&[0.0; 4]);
-        let selected = selector(Strategy::First, 2).select(&candidates, &[1, 3], None);
+        let selected = selector(Strategy::First, 2).select(
+            &candidates,
+            &[1, 3],
+            None,
+            &LinkProfile::default(),
+        );
         assert_eq!(selected, Some(vec![1, 3]));
     }
 
     #[test]
     fn min_used_orders_by_memory_then_index_and_returns_ascending() {
         let candidates = cards(&[10.0, 50.0, 5.0, 10.0]);
-        let selected = selector(Strategy::MinUsed, 2).select(&candidates, &[0, 1, 2, 3], None);
+        let selected = selector(Strategy::MinUsed, 2).select(
+            &candidates,
+            &[0, 1, 2, 3],
+            None,
+            &LinkProfile::default(),
+        );
         assert_eq!(selected, Some(vec![0, 2]));
     }
 
@@ -230,11 +248,21 @@ mod tests {
         let topology = topology_from_pairs(4, &[(0, 1, LinkType::NVLink(8))]);
         let selector = selector(Strategy::TopologyAware, 2);
 
-        let selected = selector.select(&candidates, &[0, 1, 2, 3], Some(&topology));
+        let selected = selector.select(
+            &candidates,
+            &[0, 1, 2, 3],
+            Some(&topology),
+            &LinkProfile::default(),
+        );
         assert_eq!(selected, Some(vec![0, 1]));
 
         // The best pair is busy; the lower-scoring available pair is rejected.
-        let selected = selector.select(&candidates, &[2, 3], Some(&topology));
+        let selected = selector.select(
+            &candidates,
+            &[2, 3],
+            Some(&topology),
+            &LinkProfile::default(),
+        );
         assert_eq!(selected, None);
     }
 
@@ -253,11 +281,21 @@ mod tests {
         );
         let selector = selector(Strategy::TopologyAware, 3);
 
-        let selected = selector.select(&candidates, &[0, 1, 2, 3], Some(&topology));
+        let selected = selector.select(
+            &candidates,
+            &[0, 1, 2, 3],
+            Some(&topology),
+            &LinkProfile::default(),
+        );
         assert_eq!(selected, Some(vec![0, 1, 2]));
 
         // Same minimum as the target, smaller sum: not an exact match.
-        let selected = selector.select(&candidates, &[0, 1, 3], Some(&topology));
+        let selected = selector.select(
+            &candidates,
+            &[0, 1, 3],
+            Some(&topology),
+            &LinkProfile::default(),
+        );
         assert_eq!(selected, None);
     }
 
@@ -265,16 +303,28 @@ mod tests {
     fn topology_aware_degrades_to_the_first_idle_index_for_one_card() {
         let candidates = cards(&[0.0; 3]);
         let topology = topology_from_pairs(3, &[(0, 1, LinkType::NVLink(8))]);
-        let selected =
-            selector(Strategy::TopologyAware, 1).select(&candidates, &[1, 2], Some(&topology));
+        let selected = selector(Strategy::TopologyAware, 1).select(
+            &candidates,
+            &[1, 2],
+            Some(&topology),
+            &LinkProfile::default(),
+        );
         assert_eq!(selected, Some(vec![1]));
-        assert_eq!(combination_score(&topology, &[0]), (f64::INFINITY, 0.0));
+        assert_eq!(
+            combination_score(&topology, &[0], &LinkProfile::default()),
+            (f64::INFINITY, 0.0)
+        );
     }
 
     #[test]
     fn topology_aware_one_card_needs_no_topology() {
         let candidates = cards(&[0.0; 3]);
-        let selected = selector(Strategy::TopologyAware, 1).select(&candidates, &[2], None);
+        let selected = selector(Strategy::TopologyAware, 1).select(
+            &candidates,
+            &[2],
+            None,
+            &LinkProfile::default(),
+        );
         assert_eq!(selected, Some(vec![2]));
     }
 
@@ -282,12 +332,37 @@ mod tests {
     fn returns_none_when_fewer_idle_cards_than_requested() {
         let candidates = cards(&[0.0; 3]);
         assert_eq!(
-            selector(Strategy::First, 2).select(&candidates, &[0], None),
+            selector(Strategy::First, 2).select(&candidates, &[0], None, &LinkProfile::default()),
             None
         );
         assert_eq!(
-            selector(Strategy::TopologyAware, 2).select(&candidates, &[0, 1], None),
+            selector(Strategy::TopologyAware, 2).select(
+                &candidates,
+                &[0, 1],
+                None,
+                &LinkProfile::default()
+            ),
             None
         );
+    }
+
+    #[test]
+    fn topology_aware_uses_the_link_profile() {
+        let candidates = cards(&[0.0; 4]);
+        let topology = topology_from_pairs(4, &[(0, 1, LinkType::NVLink(8))]);
+        let selector = selector(Strategy::TopologyAware, 2);
+
+        let selected = selector.select(
+            &candidates,
+            &[0, 1, 2, 3],
+            Some(&topology),
+            &LinkProfile::default(),
+        );
+        assert_eq!(selected, Some(vec![0, 1]));
+
+        let profile = LinkProfile::parse("[link.bandwidth]\nsys = 10000\n")
+            .unwrap_or_else(|error| panic!("config should parse: {error:#}"));
+        let selected = selector.select(&candidates, &[0, 1, 2, 3], Some(&topology), &profile);
+        assert_eq!(selected, Some(vec![0, 2]));
     }
 }

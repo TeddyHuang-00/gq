@@ -102,11 +102,23 @@ fn printf_lines<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
     script
 }
 
+/// Returns the per-test config root, next to the stub.
+fn config_home(stub: &Path) -> PathBuf {
+    stub.parent().map_or_else(
+        || std::env::temp_dir().join("gq-test-config"),
+        |parent| parent.join("config"),
+    )
+}
+
 /// Builds a `gq` invocation wired to this test's stub.
 fn gq(stub: &Path) -> Command {
+    let config_home = config_home(stub);
+    fs::create_dir_all(&config_home)
+        .unwrap_or_else(|error| panic!("cannot create {}: {error}", config_home.display()));
     let mut command = Command::new(env!("CARGO_BIN_EXE_gq"));
     command
         .env("GQ_NVIDIA_SMI", stub)
+        .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("RUST_LOG")
         .env_remove("NO_COLOR");
     command
@@ -386,6 +398,56 @@ fn topology_aware_waits_for_max_score_group() -> Result<()> {
     assert_eq!(code(&output), 0, "stderr: {}", text(&output.stderr));
     assert!(
         text(&output.stdout).contains("would run on GPUs 0,1"),
+        "stdout: {}",
+        text(&output.stdout)
+    );
+    Ok(())
+}
+
+#[test]
+fn config_file_overrides_topology_scores() -> Result<()> {
+    let dir = TempDir::new("config")?;
+    let topo = [
+        "GPU0 GPU1 GPU2 GPU3",
+        "GPU0 X NV8 SYS SYS",
+        "GPU1 NV8 X SYS SYS",
+        "GPU2 SYS SYS X SYS",
+        "GPU3 SYS SYS SYS X",
+    ];
+    let stub = write_stub(
+        &dir,
+        &[(0, false), (1, false), (2, false), (3, false)],
+        &topo,
+    )?;
+    let args = [
+        "run",
+        "--dry-run",
+        "-k",
+        "2",
+        "--strategy",
+        "topology-aware",
+        "--",
+        "true",
+    ];
+
+    let output = run(&stub, &args)?;
+    assert_eq!(code(&output), 0, "stderr: {}", text(&output.stderr));
+    assert!(
+        text(&output.stdout).contains("would run on GPUs 0,1"),
+        "stdout: {}",
+        text(&output.stdout)
+    );
+
+    let config_dir = config_home(&stub).join("gq");
+    fs::create_dir_all(&config_dir)?;
+    fs::write(
+        config_dir.join("config.toml"),
+        "[link.bandwidth]\nsys = 10000\n",
+    )?;
+    let output = run(&stub, &args)?;
+    assert_eq!(code(&output), 0, "stderr: {}", text(&output.stderr));
+    assert!(
+        text(&output.stdout).contains("would run on GPUs 0,2"),
         "stdout: {}",
         text(&output.stdout)
     );

@@ -19,6 +19,7 @@ use crate::{
         select::{Select, Strategy},
     },
     query::{AllUsage, Topology},
+    score::LinkProfile,
 };
 
 /// Controls how to obtain the cards
@@ -152,6 +153,7 @@ impl SelectWaitAndExecute {
         } else {
             start.checked_add(Duration::from_secs(self.wait.timeout))
         };
+        let profile = self.link_profile(count)?;
         let topology = if matches!(self.select.strategy, Strategy::TopologyAware) && count > 1 {
             match Topology::query_with_deadline(deadline) {
                 Ok(topology) => Some(topology),
@@ -196,8 +198,8 @@ impl SelectWaitAndExecute {
                     validated = true;
                     self.run_round(
                         &usage,
-                        count,
                         topology.as_ref(),
+                        &profile,
                         first,
                         &mut wait_log,
                         &signals,
@@ -233,6 +235,15 @@ impl SelectWaitAndExecute {
             if let Some(signal) = signals.sleep(sleep) {
                 return Ok(exec::signal_exit(signal));
             }
+        }
+    }
+
+    /// Loads the link profile only when topology-aware selection uses it.
+    fn link_profile(&self, count: usize) -> Result<LinkProfile> {
+        if matches!(self.select.strategy, Strategy::TopologyAware) && count > 1 {
+            LinkProfile::load()
+        } else {
+            Ok(LinkProfile::default())
         }
     }
 
@@ -282,12 +293,13 @@ impl SelectWaitAndExecute {
     fn run_round(
         &self,
         usage: &AllUsage,
-        count: usize,
         topology: Option<&Topology>,
+        profile: &LinkProfile,
         first: bool,
         wait_log: &mut WaitLog,
         signals: &exec::Signals,
     ) -> Result<Round> {
+        let count = usize::try_from(self.select.count).unwrap_or(usize::MAX);
         let present = usage.iter().map(|(index, _)| index).collect::<Vec<_>>();
         if present.is_empty() {
             bail!("nvidia-smi reported no cards");
@@ -356,7 +368,7 @@ impl SelectWaitAndExecute {
             .filter(|(_, stats)| self.filter.accepts_usage(*stats))
             .map(|(index, _)| *index)
             .collect::<Vec<_>>();
-        let Some(selected) = self.select.select(&candidates, &idle, topology) else {
+        let Some(selected) = self.select.select(&candidates, &idle, topology, profile) else {
             return Ok(self
                 .handle_selection_miss(count, idle.len(), candidates.len(), topology, wait_log)
                 .map_or(Round::Wait, Round::Done));

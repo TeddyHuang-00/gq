@@ -21,24 +21,112 @@ flowchart TD
 ## Link scores
 
 Each pair of distinct cards has a `LinkType` parsed from the topology matrix.
-The default score is a bandwidth term plus an inverse latency term:
+Each class has a one-direction bandwidth in GB/s and an end-to-end peer-to-peer latency in microseconds.
+The score is a weighted bandwidth term plus a weighted inverse latency term:
 
 ```text
-default_score = 1.0 * relative_bandwidth + 1.0 / relative_latency
+score = w_b * bandwidth_gbps / 100 + w_l / latency_us
 ```
 
-| Link        | Relative bandwidth | Relative latency | Default score | Quality |
-| ----------- | ------------------ | ---------------- | ------------- | ------- |
-| `SYS`       | 0.10               | 6.0              | 0.267         | Low     |
-| `NODE`      | 0.20               | 3.0              | 0.533         | Medium  |
-| `PHB`       | 0.22               | 2.2              | 0.675         | Medium  |
-| `PXB`       | 0.25               | 1.8              | 0.806         | Medium  |
-| `PIX`       | 0.25               | 1.5              | 0.917         | Medium  |
-| `NVLink(n)` | 0.25n              | 1.0              | 0.25n + 1.0   | High    |
+The default weights are `w_b = 1.0` and `w_l = 1.0`.
+The 100 GB/s reference keeps the default scores bit-for-bit identical to the earlier unitless priors.
 
+| Link        | Bandwidth (GB/s) | Latency (us) | Default score | Quality |
+| ----------- | ---------------- | ------------ | ------------- | ------- |
+| `SYS`       | 10               | 6.0          | 0.267         | Low     |
+| `NODE`      | 20               | 3.0          | 0.533         | Medium  |
+| `PHB`       | 22               | 2.2          | 0.675         | Medium  |
+| `PXB`       | 25               | 1.8          | 0.806         | Medium  |
+| `PIX`       | 25               | 1.5          | 0.917         | Medium  |
+| `NVLink(n)` | 25n              | 1.0          | 0.25n + 1.0   | High    |
+
+The NVLink bandwidth is per link, and a bonded `NVLink(n)` multiplies it by `n`; latency does not scale with the link count.
 Quality is a coarse display classification: High at 1.0 or above, Medium at 0.4 or above, and Low below 0.4.
+Quality labels always use the built-in priors, never the calibration profile.
 Ranking uses the raw score, not the quality label.
 The diagonal `X` entry is a self link with a nominal score, but a combination never includes a card paired with itself, so self scores are ignored.
+
+## Calibration
+
+`gq` does not measure hardware.
+It reads an optional config file and applies the values to topology-aware selection; measuring the links is an external workflow.
+
+### Config file
+
+The config lives at `$XDG_CONFIG_HOME/gq/config.toml`, falling back to `$HOME/.config/gq/config.toml`.
+If `XDG_CONFIG_HOME` is set but empty or relative, `gq` falls back to `HOME`; if neither variable yields an absolute directory, the built-in priors are used.
+A missing file is not an error.
+Unknown keys and invalid values are errors that name the file and field.
+
+Every key is optional.
+The following example shows all keys and their default values:
+
+```toml
+[link.bandwidth]   # one-direction GB/s; nvlink is per link, NVLink(n) multiplies by n
+sys = 10
+node = 20
+phb = 22
+pxb = 25
+pix = 25
+nvlink = 25
+
+[link.latency]     # microseconds, end-to-end P2P; nvlink is per link
+sys = 6
+node = 3
+phb = 2.2
+pxb = 1.8
+pix = 1.5
+nvlink = 1.0
+
+[link.score]
+bandwidth = 1.0
+latency = 1.0
+```
+
+A partial override such as `[link.bandwidth]` with `sys = 8.5` changes only `SYS`; every omitted key keeps its default.
+Bandwidth and latency values must be finite and greater than zero.
+Weights must be finite and non-negative, and at least one weight must be non-zero.
+
+The profile is read only by `--strategy topology-aware` with `-k` greater than 1.
+Other strategies and `-k 1` never read the config file.
+Quality labels in `gq topo` and the default score table above still use the built-in priors; calibration changes ranking only.
+
+### Measuring with nvbandwidth
+
+[NVIDIA nvbandwidth](https://github.com/NVIDIA/nvbandwidth) v0.5 or later reports per-pair device-to-device results, including latency.
+Run it on idle, exclusively allocated GPUs; other work on the cards or the fabric distorts the numbers.
+
+- Use `device_to_device_memcpy_read_ce` and `device_to_device_memcpy_write_ce` for bandwidth.
+  Each reports one direction; for a pair, take the lower of the two directions.
+- Use `device_to_device_latency_sm` for end-to-end peer-to-peer latency.
+  It reports nanoseconds; divide by 1000 to get microseconds.
+- `nvbandwidth -l` lists the available test keys.
+
+Verify the row and column orientation from the output header before copying numbers.
+Reduce each pair to the minimum of its two directions, then take the median per link class.
+Do not overfit: two significant digits are enough, and keep the score weights coarse unless you have evidence for a sharper ratio.
+
+### Alternative: cuda-samples
+
+`p2pBandwidthLatencyTest` from [cuda-samples](https://github.com/NVIDIA/cuda-samples) v12.8, under `Samples/5_Domain_Specific`, prints bandwidth in GB/s and latency in microseconds for every pair.
+It covers the same ground as the nvbandwidth tests above.
+
+### Mapping pairs to classes
+
+`nvidia-smi topo -m` prints the class of every pair: `SYS`, `NODE`, `PHB`, `PXB`, `PIX`, or `NVn`.
+Group the measured pairs by that label and reduce each class to one bandwidth and one latency value.
+For an `NVn` pair, write the per-link value: divide the measured pair bandwidth by `n`. The latency does not scale with `n`.
+
+The CPU-path classes must be measured end-to-end, with the same copies or kernel launches that the workload uses.
+CPU-only tools are proxies at best: `numactl` distances, cross-socket `mbw` or STREAM numbers, and PCIe generation and width describe parts of the path, not a GPU-to-GPU result.
+NUMA distance is a relative number and is not GB/s or microseconds; do not put it in this file.
+
+### Limits
+
+The model scores pairs independently.
+It does not capture aggregate contention when a collective or many concurrent transfers share the fabric, nor does it model switch oversubscription.
+Treat the profile as a ranking aid, not a performance prediction.
+`gq` never runs a benchmark; all measurements happen outside it.
 
 ## Combination score
 

@@ -54,28 +54,23 @@ impl fmt::Display for Quality {
     }
 }
 
-// TODO: Add support for using user-provided measurements instead of prior
-// heuristics.
-/// Weight of the bandwidth term in [`LinkType::score`].
-const BANDWIDTH_WEIGHT: f64 = 1.0;
-/// Weight of the latency term in [`LinkType::score`].
-const LATENCY_WEIGHT: f64 = 1.0;
-
+// Built-in priors; `LinkProfile` in `score.rs` overrides them for
+// topology-aware selection.
 impl LinkType {
-    /// An estimate of relative bandwidth, higher the better
-    pub const fn relative_bandwidth(self) -> f64 {
+    /// One-direction bandwidth estimate, in GB/s.
+    pub const fn bandwidth_gbps(self) -> f64 {
         match self {
             Self::X => 0.0,
-            Self::System => 0.1,
-            Self::SameNode => 0.2,
-            Self::HostBridge => 0.22,
-            Self::MultipleBridges | Self::SingleBridge => 0.25,
-            Self::NVLink(x) => x as f64 * 0.25,
+            Self::System => 10.0,
+            Self::SameNode => 20.0,
+            Self::HostBridge => 22.0,
+            Self::MultipleBridges | Self::SingleBridge => 25.0,
+            Self::NVLink(x) => x as f64 * 25.0,
         }
     }
 
-    /// An estimate of relative latency, lower the better
-    pub const fn relative_latency(self) -> f64 {
+    /// End-to-end peer-to-peer latency estimate, in microseconds.
+    pub const fn latency_us(self) -> f64 {
         match self {
             Self::X => 10.0,
             Self::System => 6.0,
@@ -90,12 +85,13 @@ impl LinkType {
     /// An estimate of link quality given the weights of bandwidth and latency
     /// scores, higher is better.
     pub const fn score(self, weight_bandwidth: f64, weight_latency: f64) -> f64 {
-        weight_bandwidth * self.relative_bandwidth() + weight_latency / self.relative_latency()
+        weight_bandwidth * self.bandwidth_gbps() / 100.0 + weight_latency / self.latency_us()
     }
 
-    /// Canonical pair score used for topology ranking, higher is better.
+    /// Built-in pair score used by quality labels and as the default for
+    /// topology ranking.
     pub const fn default_score(self) -> f64 {
-        self.score(BANDWIDTH_WEIGHT, LATENCY_WEIGHT)
+        self.score(1.0, 1.0)
     }
 
     /// Classifies the link by its bandwidth/latency score, excluding the

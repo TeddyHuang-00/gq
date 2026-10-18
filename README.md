@@ -103,7 +103,7 @@ A local build writes completion scripts to `target/release/completions` and a ma
 - [Typical GPU workflow](docs/workflow.md)
 - [Run lifecycle and waiting](docs/run.md)
 - [Filters and idle detection](docs/filters.md)
-- [Topology-aware selection](docs/topology.md)
+- [Topology-aware selection and calibration](docs/topology.md)
 - [CLI, output, exit codes, and completion](docs/cli.md)
 
 ## License

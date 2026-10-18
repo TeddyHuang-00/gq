@@ -16,6 +16,8 @@ mod commands;
 mod options;
 #[path = "src/query.rs"]
 mod query;
+#[path = "src/score.rs"]
+mod score;
 #[path = "src/units/mod.rs"]
 mod units;
 #[path = "src/writer/mod.rs"]
