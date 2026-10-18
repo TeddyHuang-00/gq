@@ -144,21 +144,47 @@ Unhandled errors print `Error: ...` to stderr unless `--quiet` is set.
 
 ## Completion and man page
 
-A build generates static shell completion scripts under
-`target/<profile>/completions` and a man page at `target/<profile>/man/gq.1`.
-The profile is `debug` for a normal build and `release` for
-`cargo build --release`. Install examples:
+Run `gq --help` for commands and `gq run --help` for every flag. Shell
+completion is generated at build time or at runtime; the man page is generated
+at build time.
+
+### Which file to use
+
+| Shell | Generated file | Install path |
+|---|---|---|
+| Bash | `gq.bash` | `~/.local/share/bash-completion/completions/gq` |
+| Zsh | `_gq` | a directory on `$fpath`, for example `~/.local/share/zsh/site-functions/_gq` |
+| Fish | `gq.fish` | `~/.config/fish/completions/gq.fish` |
+| Elvish | `gq.elv` | `~/.config/elvish/lib/gq.elv`, then `use gq` |
+| PowerShell | `_gq.ps1` | dot-source it from `$PROFILE` |
+
+The files are produced under `target/<profile>/completions` by a local build,
+with `debug` or `release` as the profile. To install the Bash, Zsh, and Fish
+files from a release build:
 
 ```sh
 install -Dm644 target/release/completions/gq.bash ~/.local/share/bash-completion/completions/gq
+install -Dm644 target/release/completions/_gq ~/.local/share/zsh/site-functions/_gq
 install -Dm644 target/release/completions/gq.fish ~/.config/fish/completions/gq.fish
-install -Dm644 target/release/man/gq.1 ~/.local/share/man/man1/gq.1
 ```
 
-For zsh, place `_gq` from the completions directory in a directory on `$fpath`.
-Run `mandb` if new man pages are not found automatically.
+For Elvish, copy `gq.elv` to `~/.config/elvish/lib/gq.elv` and add `use gq` to
+`rc.elv`. For PowerShell, copy `_gq.ps1` anywhere and add
+`. path\to\_gq.ps1` to `$PROFILE`.
 
-Dynamic completion needs no generated files:
+Homebrew installs the completions and the man page automatically. Release
+archives contain `completions/` and `man/gq.1`, and the loose release assets
+include `gq.bash`, `_gq`, `gq.fish`, `gq.elv`, `_gq.ps1`, and `gq.1`. Both
+`cargo binstall` and `cargo install` install only the binary, so either use
+dynamic completion or fetch the generated files from a release.
+
+### Static versus dynamic completion
+
+Static scripts are a build-time snapshot of the CLI. They are self-contained
+and add little to shell startup, but they must be reinstalled after every
+upgrade. Dynamic completion needs no generated files and always matches the
+installed binary, at the cost of one `gq` invocation per completion. Add one of
+these lines to the shell startup file:
 
 ```sh
 # bash
@@ -171,9 +197,15 @@ source <(GQ_COMPLETE=zsh gq)
 GQ_COMPLETE=fish gq | source
 ```
 
-Static scripts are a snapshot of the CLI taken at build time. They are
-self-contained and add little to shell startup, but they must be reinstalled
-after an upgrade. Dynamic completion emits shell code that calls the installed
-binary while completing. It stays in sync with that binary and needs no install
-step, at the cost of invoking `gq` during completion. Put the `source` line in
-your shell startup file so the generated shell code is refreshed on each shell.
+### Man page
+
+Install the man page and read it:
+
+```sh
+install -Dm644 target/release/man/gq.1 ~/.local/share/man/man1/gq.1
+mandb
+man gq
+```
+
+`mandb` is only needed when new man pages are not found automatically. Without
+installing, `man ./gq.1` reads the generated page in place.
