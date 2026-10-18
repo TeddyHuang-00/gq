@@ -45,7 +45,7 @@ jobs:
           [ -d "$build_dir/completions" ] || build_dir=target/release
 
           mkdir "$directory"
-          cp README.md "$directory"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$directory"
           [ ! -d docs ] || cp -r docs "$directory"
           cp -r "$build_dir/completions" "$directory"
           cp -r "$build_dir/man" "$directory"

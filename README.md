@@ -55,3 +55,7 @@ install examples and dynamic completion with `GQ_COMPLETE`.
 - [Filters and idle detection](docs/filters.md)
 - [Topology-aware selection](docs/topology.md)
 - [CLI, output, exit codes, and completion](docs/cli.md)
+
+## License
+
+All code are licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).

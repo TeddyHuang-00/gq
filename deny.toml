@@ -1,0 +1,11 @@
+[licenses]
+confidence-threshold = 0.9
+# `colored` (via `simple_logger`) is MPL-2.0. It is used unmodified; its
+# file-level copyleft does not change gq's MIT OR Apache-2.0 licensing.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "MPL-2.0",
+]

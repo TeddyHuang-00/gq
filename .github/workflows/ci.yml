@@ -36,6 +36,15 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
+  license:
+    name: license check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+
   unit-test:
     name: unit test
     runs-on: ubuntu-24.04
