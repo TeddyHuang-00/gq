@@ -7,13 +7,16 @@ It probes the cards, filters and selects a group, sets `CUDA_VISIBLE_DEVICES` an
 
 ## What it is not
 
-`gq` is not a queue or scheduler. It does not reserve cards or coordinate concurrent invocations.
+`gq` is not a queue or scheduler.
+It does not reserve cards or coordinate concurrent invocations.
 Two `gq` processes can select the same idle cards.
 Put `pueue` or another scheduler in front when jobs must not overlap.
+See [Typical workflow](docs/workflow.md) for the supported patterns.
 
 ## Install
 
-`gq` is intended to only work on Linux with `nvidia-smi`. So only installation methods for linux is shown.
+`gq` is intended to only work on Linux with `nvidia-smi`.
+So only installation methods for linux is shown.
 
 ### `cargo binstall`
 
@@ -93,11 +96,11 @@ Use `sh -c '...'` for shell syntax.
 ## Completion and man page
 
 A local build writes completion scripts to `target/release/completions` and a man page to `target/release/man/gq.1`.
-[docs/cli.md](docs/cli.md#completion-and-man-page) maps each shell to its generated file and install path,
-and covers dynamic completion with `GQ_COMPLETE`.
+[docs/cli.md](docs/cli.md#completion-and-man-page) maps each shell to its generated file and install path, and covers dynamic completion with `GQ_COMPLETE`.
 
 ## Documentation
 
+- [Typical GPU workflow](docs/workflow.md)
 - [Run lifecycle and waiting](docs/run.md)
 - [Filters and idle detection](docs/filters.md)
 - [Topology-aware selection](docs/topology.md)
