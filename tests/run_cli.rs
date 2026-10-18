@@ -14,6 +14,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use rustix::process::{Pid, Signal, kill_process};
 
 /// Idle card suffix: 5 MiB used, below the default 100 MiB threshold.
 const IDLE: &str = ", 49140 MiB, 48536 MiB, 5 MiB, 0 %";
@@ -168,15 +169,9 @@ fn wait_for_pid(path: &Path, seconds: u64) -> Result<u32> {
 }
 
 fn send_sigterm(child: &Child) -> Result<()> {
-    let pid = i32::try_from(child.id())?;
-    // SAFETY: kill(2) takes integers only; `pid` names the child we spawned.
-    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-        bail!(
-            "cannot send SIGTERM to {pid}: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    Ok(())
+    let pid = child.id();
+    kill_process(Pid::from_child(child), Signal::TERM)
+        .with_context(|| format!("cannot send SIGTERM to {pid}"))
 }
 
 #[test]
@@ -489,11 +484,7 @@ fn sigterm_forwards_to_child() -> Result<()> {
     assert_eq!(status.code(), Some(143), "stderr: {diagnostic}");
     let proc = PathBuf::from(format!("/proc/{child_pid}"));
     if let Err(error) = wait_until(|| !proc.exists(), 5) {
-        if let Ok(pid) = i32::try_from(child_pid) {
-            // SAFETY: kill(2) takes integers only; best-effort cleanup of the
-            // leftover child before failing the test.
-            unsafe { libc::kill(pid, libc::SIGKILL) };
-        }
+        let _ = child.kill();
         return Err(error).with_context(|| format!("child {child_pid} survived SIGTERM"));
     }
     Ok(())

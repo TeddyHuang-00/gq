@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod commands;
 mod options;
 mod query;

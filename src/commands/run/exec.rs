@@ -13,6 +13,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use rustix::process::{Pid, Signal, kill_process};
+use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
 
 use crate::commands::Exit;
 
@@ -20,6 +22,9 @@ use crate::commands::Exit;
 const POLL: Duration = Duration::from_millis(50);
 /// Longest single sleep slice, so a signal is noticed promptly.
 const SLICE: Duration = Duration::from_millis(100);
+
+/// ENOEXEC, the same number on every unix platform gq runs on.
+const ENOEXEC: i32 = 8;
 
 /// SIGHUP/SIGINT/SIGTERM captured into one flag. Process-global: install once.
 pub struct Signals {
@@ -36,7 +41,7 @@ impl Signals {
         let signals = Self {
             flag: Arc::new(AtomicUsize::new(0)),
         };
-        for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM] {
+        for signal in [SIGHUP, SIGINT, SIGTERM] {
             let value = usize::try_from(signal)
                 .with_context(|| format!("invalid signal number {signal}"))?;
             signal_hook::flag::register_usize(signal, Arc::clone(&signals.flag), value)
@@ -87,7 +92,7 @@ pub fn run(
     let mut child = match prepared.spawn() {
         Ok(child) => child,
         Err(err) => {
-            if err.raw_os_error() == Some(libc::ENOEXEC) {
+            if err.raw_os_error() == Some(ENOEXEC) {
                 log::error!(
                     "cannot start `{}`: {err}; the file is not an executable format",
                     command[0]
@@ -198,23 +203,21 @@ fn note_forwarded(child: &Child, signal: i32, first: &mut Option<i32>) {
 }
 
 /// Forwards `signal` to `child`; returns whether the kernel accepted it.
-fn forward(child: &Child, signal: i32) -> bool {
-    let Ok(pid) = i32::try_from(child.id()) else {
+fn forward(child: &Child, raw: i32) -> bool {
+    let Some(signal) = Signal::from_named_raw(raw) else {
         log::warn!(
-            "cannot forward signal {signal}: child pid {} does not fit in pid_t",
+            "cannot forward unknown signal {raw} to child {}",
             child.id()
         );
         return false;
     };
-    // SAFETY: kill(2) only takes integers; `pid` names a child we spawned.
-    if unsafe { libc::kill(pid, signal) } == 0 {
-        return true;
+    match kill_process(Pid::from_child(child), signal) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("cannot forward signal {raw} to child {}: {err}", child.id());
+            false
+        }
     }
-    log::warn!(
-        "cannot forward signal {signal} to child {pid}: {}",
-        io::Error::last_os_error()
-    );
-    false
 }
 
 #[cfg(test)]
@@ -328,7 +331,7 @@ mod tests {
 
     #[test]
     fn signal_exit_adds_128() {
-        assert_eq!(signal_exit(libc::SIGTERM).code(), ExitCode::from(143));
-        assert_eq!(signal_exit(libc::SIGINT).code(), ExitCode::from(130));
+        assert_eq!(signal_exit(SIGTERM).code(), ExitCode::from(143));
+        assert_eq!(signal_exit(SIGINT).code(), ExitCode::from(130));
     }
 }

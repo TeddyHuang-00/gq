@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![allow(
     dead_code,
     reason = "the build script only needs the clap command tree"
