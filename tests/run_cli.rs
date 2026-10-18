@@ -64,6 +64,23 @@ fn write_stub(dir: &TempDir, cards: &[(usize, bool)], topo: &[&str]) -> Result<P
     Ok(path)
 }
 
+/// Writes a stub that reports `cards` but fails `topo -m`.
+fn write_failing_topo_stub(dir: &TempDir, cards: &[(usize, bool)]) -> Result<PathBuf> {
+    let usage = cards
+        .iter()
+        .map(|&(index, busy)| format!("{index}{}", if busy { BUSY } else { IDLE }))
+        .collect::<Vec<_>>();
+    let mut script = String::from(
+        "#!/bin/sh\ncase \" $* \" in\n  *\" topo \"*)\n    echo 'topo failed' >&2\n    exit 1\n    ;;\n  *)\n",
+    );
+    script.push_str(&printf_lines(usage.iter().map(String::as_str)));
+    script.push_str("    ;;\nesac\n");
+    let path = dir.path().join("nvidia-smi");
+    fs::write(&path, script)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+    Ok(path)
+}
+
 /// Writes a stub whose usage answer is delayed, to exercise probe bounds.
 fn write_slow_stub(dir: &TempDir, seconds: u64) -> Result<PathBuf> {
     let script = format!("#!/bin/sh\nsleep {seconds}\nprintf '%s\\n' '0{IDLE}'\n");
@@ -353,6 +370,44 @@ fn topology_aware_waits_for_max_score_group() -> Result<()> {
         text(&output.stdout).contains("would run on GPUs 0,1"),
         "stdout: {}",
         text(&output.stdout)
+    );
+    Ok(())
+}
+
+#[test]
+fn topology_aware_one_card_warns_and_ignores_topology() -> Result<()> {
+    let dir = TempDir::new("topo-one")?;
+    let stub = write_failing_topo_stub(&dir, &[(0, false), (1, false)])?;
+    let output = run(
+        &stub,
+        &[
+            "run",
+            "--dry-run",
+            "-k",
+            "1",
+            "--strategy",
+            "topology-aware",
+            "--",
+            "true",
+        ],
+    )?;
+    let stderr = text(&output.stderr);
+
+    assert_eq!(code(&output), 0, "stderr: {stderr}");
+    assert!(
+        text(&output.stdout).contains("would run on GPUs 0"),
+        "stdout: {}",
+        text(&output.stdout)
+    );
+    assert!(
+        stderr.contains(
+            "`--strategy topology-aware` has no effect with `-k 1`; selecting the first idle GPU"
+        ),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("cannot read GPU topology"),
+        "stderr: {stderr}"
     );
     Ok(())
 }

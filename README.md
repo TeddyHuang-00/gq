@@ -47,7 +47,7 @@ Selection defaults:
 - `--strategy topology-aware` scores every candidate combination by link
   quality. It selects only a combination that matches the best score and is
   idle, so it waits instead of falling back to a worse-connected group. With
-  `-k 1` it degenerates to `first` and does not query the topology.
+  `-k 1` it is equivalent to `first`, warns, and does not query the topology.
 
 `--timeout` bounds each probe, the one-time topology query, and the sleep
 between probes; when it expires, `gq` exits 75.

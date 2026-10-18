@@ -116,6 +116,11 @@ impl SelectWaitAndExecute {
             return Ok(Exit::Code(ExitCode::from(USAGE_ERROR)));
         }
         let count = usize::try_from(self.pick.count).unwrap_or(usize::MAX);
+        if matches!(self.pick.strategy, Strategy::TopologyAware) && count == 1 {
+            log::warn!(
+                "`--strategy topology-aware` has no effect with `-k 1`; selecting the first idle GPU"
+            );
+        }
         let signals = exec::Signals::install()?;
         // The timeout is a wall-clock budget: start it before the one-time
         // topology query, so every `nvidia-smi` call is bounded by it.
