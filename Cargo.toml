@@ -2,10 +2,12 @@
 name = "gq"
 version = "0.1.0"
 edition = "2024"
+description = "GPU job runner that selects idle cards and runs commands with CUDA_VISIBLE_DEVICES."
 
 [dependencies]
 anyhow = { version = "1.0.104", features = ["backtrace"] }
 clap = { version = "4.6.7", features = ["cargo", "derive", "help"] }
+clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
 itertools = "0.15.0"
 libc = "0.2.175"
 log = "0.4.34"
@@ -15,6 +17,21 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 signal-hook = "0.3.18"
 simple_logger = { version = "5.2.0", features = ["stderr"] }
+tabled = { version = "0.22.0", features = ["ansi"] }
+
+[build-dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["cargo", "derive", "help"] }
+clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
+clap_mangen = "0.3.3"
+itertools = "0.15.0"
+libc = "0.2.175"
+log = "0.4.34"
+ndarray = "0.17.2"
+nom = "8.0.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+signal-hook = "0.3.18"
 tabled = { version = "0.22.0", features = ["ansi"] }
 
 [lints.clippy]

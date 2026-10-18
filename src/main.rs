@@ -10,10 +10,15 @@ use std::{
 };
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::CompleteEnv;
 use simple_logger::SimpleLogger;
 
 fn main() -> ExitCode {
+    CompleteEnv::with_factory(commands::Cli::command)
+        .var("GQ_COMPLETE")
+        .complete();
+
     let args = match commands::Cli::try_parse() {
         Ok(args) => args,
         Err(error) => {

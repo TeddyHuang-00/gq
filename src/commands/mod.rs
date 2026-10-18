@@ -44,7 +44,7 @@ pub enum Commands {
     name = "gq",
     author,
     version,
-    about,
+    about = env!("CARGO_PKG_DESCRIPTION"),
     styles = Styles::styled()
         .header(AnsiColor::BrightGreen.on_default().bold())
         .usage(AnsiColor::Yellow.on_default())
