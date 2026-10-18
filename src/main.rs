@@ -27,10 +27,9 @@ fn main() -> ExitCode {
         log::LevelFilter::Off
     } else {
         match args.verbose {
-            0 => log::LevelFilter::Warn,
-            1 => log::LevelFilter::Info,
-            2 => log::LevelFilter::Debug,
-            3.. => log::LevelFilter::Trace,
+            0 => log::LevelFilter::Info,
+            1 => log::LevelFilter::Debug,
+            2.. => log::LevelFilter::Trace,
         }
     };
     let colors = stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
@@ -57,6 +56,6 @@ fn dispatch(args: &commands::Cli) -> Result<commands::Exit> {
     match &args.command {
         commands::Commands::List(command) => command.execute(),
         commands::Commands::Topo(command) => command.execute(),
-        commands::Commands::Run(_) => anyhow::bail!("run is not implemented yet"),
+        commands::Commands::Run(command) => command.execute(),
     }
 }

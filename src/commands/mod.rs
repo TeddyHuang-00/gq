@@ -9,12 +9,17 @@ use clap::{
     builder::{Styles, styling::AnsiColor},
 };
 
+/// Exit code for a request that cannot be satisfied (usage error).
+pub const USAGE_ERROR: u8 = 64;
+
+/// Exit code signaling a transient failure worth retrying later.
+pub const TEMPORARY_FAILURE: u8 = 75;
+
 /// Command outcome.
 pub enum Exit {
     /// The command succeeded.
     Ok,
     /// The command finished with a specific exit code.
-    #[allow(dead_code, reason = "reserved for commands that propagate a code")]
     Code(ExitCode),
 }
 
@@ -49,10 +54,9 @@ pub enum Commands {
 pub struct Cli {
     /// Set the log verbosity level
     ///
-    /// - 0 = Warning (default)
-    /// - 1 = Info
-    /// - 2 = Debug
-    /// - 3 = Trace
+    /// - 0 = Info (default)
+    /// - 1 = Debug
+    /// - 2 = Trace
     #[arg(
         short,
         long,
@@ -62,7 +66,8 @@ pub struct Cli {
     )]
     pub verbose: u8,
 
-    /// Suppress all logging. List and topology data still prints.
+    /// Suppress all logging. Command, list, topology, and dry-run data still
+    /// print.
     #[arg(short, long, global = true, conflicts_with = "verbose")]
     pub quiet: bool,
 

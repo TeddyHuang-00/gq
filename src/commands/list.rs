@@ -1,8 +1,6 @@
 //! Determine the availability according to the same set of rules of selection
 //! as `gq run`.
 
-use std::ops::Range;
-
 use anyhow::Result;
 use clap::Args;
 use serde::Serialize;
@@ -56,27 +54,7 @@ impl List {
         if present.is_empty() {
             anyhow::bail!("nvidia-smi reported no cards");
         }
-        for (flag, ranges) in [
-            ("--include", &self.filter.include),
-            ("--exclude", &self.filter.exclude),
-        ] {
-            let Some(ranges) = ranges else {
-                continue;
-            };
-            for range in ranges {
-                if mentions_absent(range, &present) {
-                    let end = range.end.saturating_sub(1);
-                    let mention = if range.start == end {
-                        range.start.to_string()
-                    } else {
-                        format!("{}-{end}", range.start)
-                    };
-                    log::warn!(
-                        "{flag} {mention} mentions cards not present; present cards: {present:?}"
-                    );
-                }
-            }
-        }
+        self.filter.warn_absent(&present);
         let rows = usage
             .iter()
             .filter(|(index, _)| self.filter.accepts_index(*index))
@@ -103,16 +81,6 @@ impl List {
         }
         Ok(Exit::Ok)
     }
-}
-
-/// Whether a range mentions any index that is not present.
-fn mentions_absent(range: &Range<usize>, present: &[usize]) -> bool {
-    if range.len() > present.len() {
-        return true;
-    }
-    range
-        .clone()
-        .any(|index| present.binary_search(&index).is_err())
 }
 
 fn csv_rows(rows: &[Row]) -> Vec<Vec<String>> {
@@ -144,16 +112,6 @@ fn csv_rows(rows: &[Row]) -> Vec<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detects_ranges_mentioning_absent_cards() {
-        let present = [0, 2];
-        assert!(!mentions_absent(&(0..1), &present));
-        assert!(mentions_absent(&(1..2), &present));
-        assert!(mentions_absent(&(0..2), &present));
-        assert!(mentions_absent(&(0..3), &present));
-        assert!(mentions_absent(&(0..usize::MAX), &present));
-    }
 
     #[test]
     fn row_serializes_as_json_object_and_csv_record() {

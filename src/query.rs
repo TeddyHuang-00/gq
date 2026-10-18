@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use ndarray::prelude::*;
@@ -50,6 +55,11 @@ impl fmt::Display for Quality {
 
 // TODO: Add support for using user-provided measurements instead of prior
 // heuristics.
+/// Weight of the bandwidth term in [`LinkType::score`].
+const BANDWIDTH_WEIGHT: f64 = 1.0;
+/// Weight of the latency term in [`LinkType::score`].
+const LATENCY_WEIGHT: f64 = 1.0;
+
 impl LinkType {
     /// An estimate of relative bandwidth, higher the better
     pub const fn relative_bandwidth(self) -> f64 {
@@ -82,11 +92,14 @@ impl LinkType {
         weight_bandwidth * self.relative_bandwidth() + weight_latency / self.relative_latency()
     }
 
+    /// Canonical pair score used for topology ranking, higher is better.
+    pub const fn default_score(self) -> f64 {
+        self.score(BANDWIDTH_WEIGHT, LATENCY_WEIGHT)
+    }
+
     /// Classifies the link by its bandwidth/latency score, excluding the
     /// self-link.
     pub const fn quality(self) -> Option<Quality> {
-        const BANDWIDTH_WEIGHT: f64 = 1.0;
-        const LATENCY_WEIGHT: f64 = 1.0;
         // SYS scores 0.267 and NODE scores 0.533, so 0.4 separates them.
         const MEDIUM_SCORE: f64 = 0.4;
         // SingleBridge/PIX scores 0.917, the lowest NVLink score is 1.0 (NV0),
@@ -95,7 +108,7 @@ impl LinkType {
         if matches!(self, Self::X) {
             return None;
         }
-        let score = self.score(BANDWIDTH_WEIGHT, LATENCY_WEIGHT);
+        let score = self.default_score();
         if score >= HIGH_SCORE {
             Some(Quality::High)
         } else if score >= MEDIUM_SCORE {
@@ -112,6 +125,23 @@ pub struct Topology {
 }
 
 impl Topology {
+    /// Builds a topology from a square row matrix. Test-only.
+    #[cfg(test)]
+    pub(crate) fn from_rows(rows: Vec<Vec<LinkType>>) -> Self {
+        let dimensions = rows.len();
+        assert!(
+            rows.iter().all(|row| row.len() == dimensions),
+            "topology test matrix must be square"
+        );
+        let mut connections = Array2::from_elem((dimensions, dimensions), LinkType::X);
+        for (row_index, row) in rows.into_iter().enumerate() {
+            for (column_index, link) in row.into_iter().enumerate() {
+                connections[(row_index, column_index)] = link;
+            }
+        }
+        Self { connections }
+    }
+
     /// Parses the command output from query.
     fn parse_command_output<S>(input: S) -> Result<Self>
     where
@@ -189,7 +219,12 @@ impl Topology {
 
     /// Runs `nvidia-smi` and returns the extracted topology.
     pub fn query() -> Result<Self> {
-        Self::parse_command_output(smi(&["topo", "-m"])?)
+        Self::query_with_deadline(None)
+    }
+
+    /// Like [`Self::query`], but the probe is bounded by `deadline`.
+    pub fn query_with_deadline(deadline: Option<Instant>) -> Result<Self> {
+        Self::parse_command_output(smi(&["topo", "-m"], deadline)?)
     }
 
     pub fn dimensions(&self) -> usize {
@@ -322,22 +357,42 @@ impl AllUsage {
     }
 
     /// Samples `probe_count` outputs one second apart.
-    fn sample(probe_count: u16) -> Result<Vec<String>> {
+    fn sample(probe_count: u16, deadline: Option<Instant>) -> Result<Vec<String>> {
         let mut outputs = Vec::with_capacity(usize::from(probe_count));
         for idx in 0..probe_count {
             if idx > 0 {
-                std::thread::sleep(std::time::Duration::from_secs(1));
+                ensure_before_deadline(deadline)?;
+                // Cap the inter-probe sleep so a short --timeout is not
+                // overshot by a full second before the next check.
+                let sleep = deadline.map_or(Duration::from_secs(1), |deadline| {
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_secs(1))
+                });
+                if sleep.is_zero() {
+                    anyhow::bail!("the probe deadline passed before the next probe could start");
+                }
+                std::thread::sleep(sleep);
             }
-            outputs.push(smi(&[
-                "--query-gpu=index,memory.total,memory.free,memory.used,utilization.gpu",
-                "--format=noheader",
-            ])?);
+            ensure_before_deadline(deadline)?;
+            outputs.push(smi(
+                &[
+                    "--query-gpu=index,memory.total,memory.free,memory.used,utilization.gpu",
+                    "--format=noheader",
+                ],
+                deadline,
+            )?);
         }
         Ok(outputs)
     }
 
     /// Runs `nvidia-smi` to get usage info and aggregate over time.
     pub fn query(probe_count: u16) -> Result<Self> {
+        Self::query_with_deadline(probe_count, None)
+    }
+
+    /// Like [`Self::query`], but stops before `deadline` passes.
+    pub fn query_with_deadline(probe_count: u16, deadline: Option<Instant>) -> Result<Self> {
         if probe_count > 60 {
             log::warn!(
                 "probing {probe_count} times takes about {} seconds; 10 or fewer probes is \
@@ -345,13 +400,13 @@ impl AllUsage {
                 probe_count.saturating_sub(1)
             );
         }
-        match Self::from_probe_outputs(Self::sample(probe_count)?) {
+        match Self::from_probe_outputs(Self::sample(probe_count, deadline)?) {
             Ok(usage) => Ok(usage),
             Err(error) if error.is::<InconsistentCardSet>() => {
                 log::warn!("discarding probe round ({error}); retrying");
                 // A discarded round does not consume a wait attempt; one retry
                 // is a bound against an infinite loop, not an extra attempt.
-                Self::from_probe_outputs(Self::sample(probe_count)?)
+                Self::from_probe_outputs(Self::sample(probe_count, deadline)?)
             }
             Err(error) => Err(error),
         }
@@ -362,13 +417,62 @@ impl AllUsage {
     }
 }
 
+/// Longest a single `nvidia-smi` probe may run.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How often a running probe checks for exit and the deadline.
+const PROBE_POLL: Duration = Duration::from_millis(20);
+
+/// Fails once `deadline` has passed, before starting or waiting for a probe.
+fn ensure_before_deadline(deadline: Option<Instant>) -> Result<()> {
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        anyhow::bail!("the probe deadline passed before the probe finished");
+    }
+    Ok(())
+}
+
 /// Runs `nvidia-smi` (or `GQ_NVIDIA_SMI` when set) with the given arguments.
-fn smi(args: &[&str]) -> Result<String> {
+///
+/// The child is killed after [`PROBE_TIMEOUT`] or when `deadline` passes,
+/// whichever comes first. Signals are handled between probes, never during
+/// one.
+fn smi(args: &[&str], deadline: Option<Instant>) -> Result<String> {
     let program = std::env::var("GQ_NVIDIA_SMI").unwrap_or_else(|_| "nvidia-smi".to_owned());
-    let output = std::process::Command::new(&program)
+    if program.is_empty() {
+        anyhow::bail!("GQ_NVIDIA_SMI is set but empty");
+    }
+    log::debug!("running `{program}` {args:?}");
+    let limit = deadline.map_or(PROBE_TIMEOUT, |deadline| {
+        deadline
+            .saturating_duration_since(Instant::now())
+            .min(PROBE_TIMEOUT)
+    });
+    if limit.is_zero() {
+        anyhow::bail!("`{program}` not started: the probe deadline has already passed");
+    }
+    let started = Instant::now();
+    let mut child = Command::new(&program)
         .args(args)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .with_context(|| format!("failed to run `{program}`"))?;
+    loop {
+        let finished = child
+            .try_wait()
+            .with_context(|| format!("cannot wait for `{program}`"))?;
+        if finished.is_some() {
+            break;
+        }
+        if started.elapsed() >= limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("`{program}` did not finish within {limit:?}; killed it");
+        }
+        std::thread::sleep(PROBE_POLL);
+    }
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("cannot read output of `{program}`"))?;
     if !output.status.success() {
         anyhow::bail!(
             "`{program}` exited with {}: {}",
@@ -381,6 +485,7 @@ fn smi(args: &[&str]) -> Result<String> {
     if stdout.trim().is_empty() {
         anyhow::bail!("`{program}` returned no output");
     }
+    log::trace!("`{program}` {args:?} output:\n{stdout}");
     Ok(stdout)
 }
 
