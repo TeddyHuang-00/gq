@@ -9,7 +9,7 @@ use serde::Serialize;
 use tabled::{
     Table, Tabled,
     builder::Builder,
-    settings::{Alignment, Color, Style, object::Rows},
+    settings::{Alignment, Color, Style},
 };
 
 use super::Exit;
@@ -110,6 +110,14 @@ fn utilization_cell(percent: f64) -> String {
     )
 }
 
+fn status_cell(status: &str, color: bool) -> String {
+    if color && status == "Available" {
+        Color::FG_BRIGHT_YELLOW.colorize(status)
+    } else {
+        status.to_owned()
+    }
+}
+
 fn render_pretty(rows: &[Row], color: bool) -> String {
     let mut table_rows = vec![HEADERS.map(str::to_owned).to_vec()];
     table_rows.extend(rows.iter().map(|row| {
@@ -118,12 +126,12 @@ fn render_pretty(rows: &[Row], color: bool) -> String {
             gb(row.memory_total_mib),
             vram_bar(row.memory_used_mib, row.memory_free_mib, color),
             utilization_cell(row.utilization_percent),
-            row.status.to_owned(),
+            status_cell(row.status, color),
         ]
     }));
     let mut table = Table::from(Builder::from(table_rows));
     table.with(Style::modern());
-    table.modify(Rows::first(), Alignment::center());
+    table.with(Alignment::center());
     table.to_string()
 }
 
@@ -237,6 +245,58 @@ mod tests {
         // side plus the one-column padding. Left alignment would put one
         // space on the left and five on the right.
         assert_eq!(cells[4], "   Utilization   ");
+    }
+
+    #[test]
+    fn every_cell_is_centered_and_only_available_is_yellow() {
+        let rows = [
+            Row {
+                index: 0,
+                memory_total_mib: 32_607.0,
+                memory_used_mib: 6_809.0,
+                memory_free_mib: 25_391.0,
+                utilization_percent: 15.0,
+                status: "Available",
+            },
+            Row {
+                index: 1,
+                memory_total_mib: 32_607.0,
+                memory_used_mib: 30_000.0,
+                memory_free_mib: 2_607.0,
+                utilization_percent: 100.0,
+                status: "In use",
+            },
+        ];
+
+        let plain = render_pretty(&rows, false);
+        assert!(!plain.contains('\u{1b}'), "plain={plain:?}");
+        let available = plain
+            .lines()
+            .find(|line| line.contains("Available"))
+            .unwrap_or_else(|| panic!("no Available line in {plain:?}"));
+        let cells = available.split('│').collect::<Vec<_>>();
+        // The index column is five columns wide for the "Index" header, so a
+        // one-character value gets two spaces on each side plus cell padding.
+        assert_eq!(cells[1], "   0   ");
+        assert_eq!(cells[5], " Available ");
+
+        let colored = render_pretty(&rows, true);
+        let lines = colored.lines().collect::<Vec<_>>();
+        let available = lines
+            .iter()
+            .find(|line| line.contains("Available"))
+            .unwrap_or_else(|| panic!("no Available line in {colored:?}"));
+        let cells = available.split('│').collect::<Vec<_>>();
+        assert_eq!(cells[1], "   0   ");
+        assert_eq!(cells[5], " \u{1b}[93mAvailable\u{1b}[39m ");
+
+        let in_use = lines
+            .iter()
+            .find(|line| line.contains("In use"))
+            .unwrap_or_else(|| panic!("no In use line in {colored:?}"));
+        let cells = in_use.split('│').collect::<Vec<_>>();
+        assert_eq!(cells[5].trim(), "In use");
+        assert!(!cells[5].contains('\u{1b}'), "in_use={:?}", cells[5]);
     }
 
     #[test]
