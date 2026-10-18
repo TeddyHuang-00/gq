@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "GPU job runner that selects idle cards and runs commands with CUDA_VISIBLE_DEVICES."
+authors = ["Nan Huang <teddyhuangnan@gmail.com>"]
+repository = "https://github.com/TeddyHuang-00/gq"
 
 [dependencies]
 anyhow = { version = "1.0.104", features = ["backtrace"] }
