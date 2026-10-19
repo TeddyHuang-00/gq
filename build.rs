@@ -12,10 +12,10 @@ use clap_mangen::Man;
 
 #[path = "src/commands/mod.rs"]
 mod commands;
+#[path = "src/data/mod.rs"]
+mod data;
 #[path = "src/options/mod.rs"]
 mod options;
-#[path = "src/query.rs"]
-mod query;
 #[path = "src/score.rs"]
 mod score;
 #[path = "src/units/mod.rs"]

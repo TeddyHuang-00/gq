@@ -14,11 +14,11 @@ use itertools::Itertools;
 
 use super::{Exit, TEMPORARY_FAILURE, USAGE_ERROR};
 use crate::{
+    data::{AllUsage, Topology},
     options::{
         filter::Filter,
         select::{Select, Strategy},
     },
-    query::{AllUsage, Topology},
     score::LinkProfile,
 };
 

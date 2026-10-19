@@ -14,8 +14,8 @@ use tabled::{
 
 use super::Exit;
 use crate::{
+    data::AllUsage,
     options::{filter::Filter, output::OutputMode},
-    query::AllUsage,
     writer,
 };
 

@@ -5,7 +5,7 @@ use std::{env, fs, io, path::PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use crate::query::LinkType;
+use crate::data::LinkType;
 
 /// One-direction bandwidth for each link class, in GB/s.
 #[derive(Debug, Deserialize)]

@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 mod commands;
+mod data;
 mod options;
-mod query;
 mod score;
 mod units;
 mod writer;

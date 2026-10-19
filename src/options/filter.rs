@@ -5,7 +5,7 @@ use std::ops::Range;
 use clap::Args;
 
 use crate::{
-    query::UsageInfo,
+    data::UsageInfo,
     units::{
         quantity::{Percent, Vram},
         range,
@@ -398,7 +398,7 @@ fn threshold_mib(value: Vram, total_mib: f64) -> f64 {
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
-    use crate::query::AppCount;
+    use crate::data::AppCount;
 
     fn filter() -> Filter {
         Filter {

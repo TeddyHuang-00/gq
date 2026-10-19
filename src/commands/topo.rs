@@ -11,8 +11,8 @@ use tabled::{
 
 use super::Exit;
 use crate::{
+    data::{LinkType, Quality, Topology as QueryTopology},
     options::output::OutputMode,
-    query::{LinkType, Quality, Topology as QueryTopology},
     writer,
 };
 

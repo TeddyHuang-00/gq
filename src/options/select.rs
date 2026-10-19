@@ -6,7 +6,7 @@ use clap::{Args, ValueEnum};
 use itertools::Itertools;
 
 use crate::{
-    query::{Topology, UsageInfo},
+    data::{Topology, UsageInfo},
     score::LinkProfile,
 };
 
@@ -182,7 +182,7 @@ fn compare_scores(left: (f64, f64), right: (f64, f64)) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::{AppCount, LinkType};
+    use crate::data::{AppCount, LinkType};
 
     fn cards(used_mib: &[f64]) -> Vec<(usize, UsageInfo)> {
         used_mib
