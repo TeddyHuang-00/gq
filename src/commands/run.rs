@@ -217,10 +217,7 @@ impl SelectWaitAndExecute {
         if present.is_empty() {
             bail!("nvidia-smi reported no cards");
         }
-        let candidates = usage
-            .iter()
-            .filter(|(index, _)| self.filter.accepts_index(*index))
-            .collect::<Vec<_>>();
+        let candidates = self.filter.candidates(usage);
         if first {
             self.filter.warn_absent(&present);
             let indices = candidates
@@ -276,11 +273,7 @@ impl SelectWaitAndExecute {
         for (index, stats) in &candidates {
             self.filter.log_idle(*index, *stats);
         }
-        let idle = candidates
-            .iter()
-            .filter(|(_, stats)| self.filter.accepts_usage(*stats))
-            .map(|(index, _)| *index)
-            .collect::<Vec<_>>();
+        let idle = self.filter.idle_cards(&candidates);
         let Some(selected) = self.select.select(&candidates, &idle, topology, profile) else {
             return Ok(self
                 .handle_selection_miss(count, idle.len(), candidates.len(), topology, wait_log)

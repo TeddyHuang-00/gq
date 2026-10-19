@@ -131,10 +131,7 @@ impl List {
             anyhow::bail!("nvidia-smi reported no cards");
         }
         self.filter.warn_absent(&present);
-        let candidates = usage
-            .iter()
-            .filter(|(index, _)| self.filter.accepts_index(*index))
-            .collect::<Vec<_>>();
+        let candidates = self.filter.candidates(&usage);
         let indices = candidates
             .iter()
             .map(|(index, _)| *index)

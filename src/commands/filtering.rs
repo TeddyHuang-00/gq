@@ -2,7 +2,11 @@
 
 use std::ops::Range;
 
-use crate::{data::UsageInfo, options::filter::Filter, units::quantity::Vram};
+use crate::{
+    data::{AllUsage, UsageInfo},
+    options::filter::Filter,
+    units::quantity::Vram,
+};
 
 /// Default maximum used VRAM when neither `--max-vram` nor `--min-vram` is
 /// given.
@@ -180,6 +184,13 @@ impl Filter {
 
     /// Returns the first failed idle threshold, if any.
     fn usage_miss(&self, stats: UsageInfo) -> Option<UsageMiss> {
+        self.memory_miss(stats)
+            .or_else(|| self.utilization_miss(stats))
+            .or_else(|| self.app_miss(stats))
+    }
+
+    /// Checks the free (or default used) VRAM bound.
+    fn memory_miss(&self, stats: UsageInfo) -> Option<UsageMiss> {
         if let Some(min) = self.min_vram {
             let limit_mib = threshold_mib(min, stats.memory_total_mib);
             if stats.memory_free_mib < limit_mib {
@@ -200,14 +211,23 @@ impl Filter {
                 });
             }
         }
-        if let Some(limit) = self.max_utilization
-            && stats.utilization_percent > limit.0
-        {
+        None
+    }
+
+    /// Checks the utilization bound.
+    fn utilization_miss(&self, stats: UsageInfo) -> Option<UsageMiss> {
+        let limit = self.max_utilization?;
+        if stats.utilization_percent > limit.0 {
             return Some(UsageMiss::Utilization {
                 actual: stats.utilization_percent,
                 limit: limit.0,
             });
         }
+        None
+    }
+
+    /// Checks the foreign-app bound, then the total-app bound.
+    const fn app_miss(&self, stats: UsageInfo) -> Option<UsageMiss> {
         if stats.apps.foreign > self.max_foreign_apps {
             return Some(UsageMiss::ForeignApps {
                 count: stats.apps.foreign,
@@ -223,6 +243,23 @@ impl Filter {
             });
         }
         None
+    }
+
+    /// Cards passing the include/exclude ranges, in ascending index order.
+    pub fn candidates(&self, usage: &AllUsage) -> Vec<(usize, UsageInfo)> {
+        usage
+            .iter()
+            .filter(|(index, _)| self.accepts_index(*index))
+            .collect()
+    }
+
+    /// Indices of `candidates` that are idle, in ascending order.
+    pub fn idle_cards(&self, candidates: &[(usize, UsageInfo)]) -> Vec<usize> {
+        candidates
+            .iter()
+            .filter(|(_, stats)| self.accepts_usage(*stats))
+            .map(|(index, _)| *index)
+            .collect()
     }
 }
 
@@ -539,6 +576,39 @@ mod tests {
         foreign_first.max_any_apps = Some(0);
         assert!(matches!(
             foreign_first.usage_miss(stats_with_apps(1, 1)),
+            Some(UsageMiss::ForeignApps { .. })
+        ));
+    }
+
+    #[test]
+    fn memory_miss_wins_when_every_threshold_fails() {
+        let mut filter = filter();
+        filter.min_vram = Some(Vram::Percent(Percent(50.0)));
+        filter.max_utilization = Some(Percent(0.0));
+        filter.max_any_apps = Some(0);
+        let mut busy = stats_with_apps(2, 1);
+        busy.memory_used_mib = 700.0;
+        busy.memory_free_mib = 324.0;
+        busy.utilization_percent = 50.0;
+
+        // All four bounds fail; memory is reported first.
+        assert!(matches!(
+            filter.usage_miss(busy),
+            Some(UsageMiss::Free { .. })
+        ));
+
+        // Memory passes: utilization is next.
+        filter.min_vram = None;
+        filter.max_vram = Some(Vram::Bytes(1024 * 1024 * 1024));
+        assert!(matches!(
+            filter.usage_miss(busy),
+            Some(UsageMiss::Utilization { .. })
+        ));
+
+        // Memory and utilization pass: foreign apps precede the any-apps bound.
+        filter.max_utilization = None;
+        assert!(matches!(
+            filter.usage_miss(busy),
             Some(UsageMiss::ForeignApps { .. })
         ));
     }
