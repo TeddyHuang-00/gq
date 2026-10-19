@@ -16,10 +16,24 @@ use std::{
 use anyhow::{Context, Result, bail};
 use rustix::process::{Pid, Signal, kill_process};
 
-/// Idle card suffix: 5 MiB used, below the default 100 MiB threshold.
+/// Idle card memory columns: 5 MiB used, below the default 100 MiB threshold.
 const IDLE: &str = ", 49140 MiB, 48536 MiB, 5 MiB, 0 %";
-/// Busy card suffix: 1024 MiB used, above the default threshold.
+/// Busy card memory columns: 1024 MiB used, above the default threshold.
 const BUSY: &str = ", 49140 MiB, 48116 MiB, 1024 MiB, 0 %";
+
+/// UUID the stub reports for card `index`.
+fn gpu_uuid(index: usize) -> String {
+    format!("GPU-{index:08x}-0000-0000-0000-000000000000")
+}
+
+/// One usage row for card `index`, with the UUID column the probe expects.
+fn usage_row(index: usize, busy: bool) -> String {
+    format!(
+        "{index}, {}{}",
+        gpu_uuid(index),
+        if busy { BUSY } else { IDLE }
+    )
+}
 
 /// A per-test temporary directory that removes itself on drop.
 struct TempDir {
@@ -50,12 +64,27 @@ impl Drop for TempDir {
 
 /// Writes an executable `nvidia-smi` stub reporting `cards` and `topo` rows.
 fn write_stub(dir: &TempDir, cards: &[(usize, bool)], topo: &[&str]) -> Result<PathBuf> {
+    write_app_stub(dir, cards, topo, "")
+}
+
+/// Like [`write_stub`], but the compute-apps query prints `apps` and exits 0.
+///
+/// `apps` is shell code, so it can refer to `$PPID` to report an app owned by
+/// the running `gq` process.
+fn write_app_stub(
+    dir: &TempDir,
+    cards: &[(usize, bool)],
+    topo: &[&str],
+    apps: &str,
+) -> Result<PathBuf> {
     let usage = cards
         .iter()
-        .map(|&(index, busy)| format!("{index}{}", if busy { BUSY } else { IDLE }))
+        .map(|&(index, busy)| usage_row(index, busy))
         .collect::<Vec<_>>();
     let mut script = String::from("#!/bin/sh\ncase \" $* \" in\n  *\" topo \"*)\n");
     script.push_str(&printf_lines(topo.iter().copied()));
+    script.push_str("    ;;\n  *\"--query-compute-apps\"*)\n");
+    script.push_str(apps);
     script.push_str("    ;;\n  *)\n");
     script.push_str(&printf_lines(usage.iter().map(String::as_str)));
     script.push_str("    ;;\nesac\n");
@@ -69,10 +98,10 @@ fn write_stub(dir: &TempDir, cards: &[(usize, bool)], topo: &[&str]) -> Result<P
 fn write_failing_topo_stub(dir: &TempDir, cards: &[(usize, bool)]) -> Result<PathBuf> {
     let usage = cards
         .iter()
-        .map(|&(index, busy)| format!("{index}{}", if busy { BUSY } else { IDLE }))
+        .map(|&(index, busy)| usage_row(index, busy))
         .collect::<Vec<_>>();
     let mut script = String::from(
-        "#!/bin/sh\ncase \" $* \" in\n  *\" topo \"*)\n    echo 'topo failed' >&2\n    exit 1\n    ;;\n  *)\n",
+        "#!/bin/sh\ncase \" $* \" in\n  *\" topo \"*)\n    echo 'topo failed' >&2\n    exit 1\n    ;;\n  *\"--query-compute-apps\"*)\n    ;;\n  *)\n",
     );
     script.push_str(&printf_lines(usage.iter().map(String::as_str)));
     script.push_str("    ;;\nesac\n");
@@ -84,7 +113,10 @@ fn write_failing_topo_stub(dir: &TempDir, cards: &[(usize, bool)]) -> Result<Pat
 
 /// Writes a stub whose usage answer is delayed, to exercise probe bounds.
 fn write_slow_stub(dir: &TempDir, seconds: u64) -> Result<PathBuf> {
-    let script = format!("#!/bin/sh\nsleep {seconds}\nprintf '%s\\n' '0{IDLE}'\n");
+    let script = format!(
+        "#!/bin/sh\nsleep {seconds}\nprintf '%s\\n' '{}'\n",
+        usage_row(0, false)
+    );
     let path = dir.path().join("nvidia-smi");
     fs::write(&path, script)?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
@@ -263,6 +295,80 @@ fn busy_gpu_with_no_wait_exits_75() -> Result<()> {
         "stderr: {}",
         text(&output.stderr)
     );
+    Ok(())
+}
+
+#[test]
+fn foreign_app_marks_idle_card_in_use_until_limit_is_raised() -> Result<()> {
+    let dir = TempDir::new("foreign-app")?;
+    // The pid does not exist, which must count as foreign.
+    let apps = format!("    printf '%s, %s\\n' '{}' '4294967295'\n", gpu_uuid(0));
+    let stub = write_app_stub(&dir, &[(0, false)], &[], &apps)?;
+
+    let listed = run(&stub, &["list"])?;
+    assert_eq!(code(&listed), 0, "stderr: {}", text(&listed.stderr));
+    assert!(
+        text(&listed.stdout).contains("In use"),
+        "stdout: {}",
+        text(&listed.stdout)
+    );
+
+    let blocked = run(&stub, &["run", "--no-wait", "--", "true"])?;
+    assert_eq!(code(&blocked), 75, "stderr: {}", text(&blocked.stderr));
+
+    let listed = run(&stub, &["list", "--max-foreign-apps", "1"])?;
+    assert_eq!(code(&listed), 0, "stderr: {}", text(&listed.stderr));
+    assert!(
+        text(&listed.stdout).contains("Available"),
+        "stdout: {}",
+        text(&listed.stdout)
+    );
+
+    let allowed = run(
+        &stub,
+        &["run", "--no-wait", "--max-foreign-apps", "1", "--", "true"],
+    )?;
+    assert_eq!(code(&allowed), 0, "stderr: {}", text(&allowed.stderr));
+    Ok(())
+}
+
+#[test]
+fn own_app_counts_toward_max_any_apps_but_not_foreign() -> Result<()> {
+    let dir = TempDir::new("own-app")?;
+    // `$PPID` is the live gq process, so the app belongs to the same user.
+    let apps = format!("    printf '%s, %s\\n' '{}' \"$PPID\"\n", gpu_uuid(0));
+    let stub = write_app_stub(&dir, &[(0, false)], &[], &apps)?;
+
+    for args in [&["list"][..], &["list", "--max-any-apps", "1"]] {
+        let listed = run(&stub, args)?;
+        assert_eq!(code(&listed), 0, "args: {args:?}");
+        assert!(
+            text(&listed.stdout).contains("Available"),
+            "args: {args:?}; stdout: {}",
+            text(&listed.stdout)
+        );
+    }
+
+    let listed = run(&stub, &["list", "--max-any-apps", "0"])?;
+    assert_eq!(code(&listed), 0, "stderr: {}", text(&listed.stderr));
+    assert!(
+        text(&listed.stdout).contains("In use"),
+        "stdout: {}",
+        text(&listed.stdout)
+    );
+    Ok(())
+}
+
+#[test]
+fn compute_apps_probe_failure_is_not_treated_as_no_apps() -> Result<()> {
+    let dir = TempDir::new("app-probe-failure")?;
+    let stub = write_app_stub(&dir, &[(0, false)], &[], "    exit 1\n")?;
+
+    let listed = run(&stub, &["list"])?;
+    assert_eq!(code(&listed), 1, "stderr: {}", text(&listed.stderr));
+
+    let ran = run(&stub, &["run", "--no-wait", "--", "true"])?;
+    assert_eq!(code(&ran), 75, "stderr: {}", text(&ran.stderr));
     Ok(())
 }
 

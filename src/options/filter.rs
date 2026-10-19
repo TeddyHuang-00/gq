@@ -64,6 +64,15 @@ pub struct Filter {
         value_name = "PERCENT"
     )]
     pub max_utilization: Option<Percent>,
+    /// Only pick cards with at most this many apps owned by other users.
+    ///
+    /// Apps whose owner cannot be read from `/proc` count as foreign. The
+    /// default of 0 marks any card running another user's app as in use.
+    #[arg(long, value_name = "COUNT", default_value_t = 0)]
+    pub max_foreign_apps: usize,
+    /// Only pick cards with at most this many compute apps in total.
+    #[arg(long, value_name = "COUNT")]
+    pub max_any_apps: Option<usize>,
     /// Number of probes taken when measuring availability.
     ///
     /// Probes will be taken with 1 second interval.
@@ -163,7 +172,16 @@ impl Filter {
             || "no utilization limit".to_owned(),
             |max| format!("utilization <= {}%", max.0),
         );
-        log::info!("idle rule: {memory}{default}; {utilization}");
+        let apps = self.max_any_apps.map_or_else(
+            || format!("foreign apps <= {}", self.max_foreign_apps),
+            |max| {
+                format!(
+                    "foreign apps <= {}; any apps <= {max}",
+                    self.max_foreign_apps
+                )
+            },
+        );
+        log::info!("idle rule: {memory}{default}; {utilization}; {apps}");
     }
 
     /// Logs why one candidate is or is not idle, at Debug.
@@ -192,9 +210,11 @@ impl Filter {
                 );
                 let value = self.min_vram.or(self.max_vram).unwrap_or(DEFAULT_MAX_VRAM);
                 log::debug!(
-                    "GPU{index}: idle ({memory}{}, util {:.0}%)",
+                    "GPU{index}: idle ({memory}{}, util {:.0}%, apps {} ({} foreign))",
                     threshold_note(value),
-                    stats.utilization_percent
+                    stats.utilization_percent,
+                    stats.apps.any,
+                    stats.apps.foreign
                 );
             }
             Some(UsageMiss::Used {
@@ -219,6 +239,12 @@ impl Filter {
             ),
             Some(UsageMiss::Utilization { actual, limit }) => {
                 log::debug!("GPU{index}: not idle: utilization {actual:.0}% > {limit}%");
+            }
+            Some(UsageMiss::ForeignApps { count, limit }) => {
+                log::debug!("GPU{index}: not idle: foreign apps {count} > {limit}");
+            }
+            Some(UsageMiss::AnyApps { count, limit }) => {
+                log::debug!("GPU{index}: not idle: apps (any user) {count} > {limit}");
             }
         }
     }
@@ -252,12 +278,29 @@ impl Filter {
                 });
             }
         }
-        self.max_utilization.and_then(|limit| {
-            (stats.utilization_percent > limit.0).then_some(UsageMiss::Utilization {
+        if let Some(limit) = self.max_utilization
+            && stats.utilization_percent > limit.0
+        {
+            return Some(UsageMiss::Utilization {
                 actual: stats.utilization_percent,
                 limit: limit.0,
-            })
-        })
+            });
+        }
+        if stats.apps.foreign > self.max_foreign_apps {
+            return Some(UsageMiss::ForeignApps {
+                count: stats.apps.foreign,
+                limit: self.max_foreign_apps,
+            });
+        }
+        if let Some(limit) = self.max_any_apps
+            && stats.apps.any > limit
+        {
+            return Some(UsageMiss::AnyApps {
+                count: stats.apps.any,
+                limit,
+            });
+        }
+        None
     }
 }
 
@@ -277,6 +320,14 @@ enum UsageMiss {
     Utilization {
         actual: f64,
         limit: f64,
+    },
+    ForeignApps {
+        count: usize,
+        limit: usize,
+    },
+    AnyApps {
+        count: usize,
+        limit: usize,
     },
 }
 
@@ -347,6 +398,7 @@ fn threshold_mib(value: Vram, total_mib: f64) -> f64 {
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
+    use crate::query::AppCount;
 
     fn filter() -> Filter {
         Filter {
@@ -355,6 +407,8 @@ mod tests {
             max_vram: None,
             min_vram: None,
             max_utilization: None,
+            max_foreign_apps: 0,
+            max_any_apps: None,
             probe_count: 1,
         }
     }
@@ -365,7 +419,15 @@ mod tests {
             memory_free_mib: total_mib - used_mib,
             memory_used_mib: used_mib,
             utilization_percent,
+            apps: AppCount::default(),
         }
+    }
+
+    /// Idle-by-memory stats carrying the given app counts.
+    fn stats_with_apps(any: usize, foreign: usize) -> UsageInfo {
+        let mut stats = stats(1024.0, 0.0, 0.0);
+        stats.apps = AppCount { any, foreign };
+        stats
     }
 
     #[test]
@@ -417,6 +479,37 @@ mod tests {
         assert!(!filter.accepts_usage(stats(1024.0, 0.0, 40.1)));
         filter.max_utilization = Some(Percent(0.0));
         assert!(filter.accepts_usage(stats(1024.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn filters_cards_by_foreign_and_total_app_counts() {
+        // Default: no foreign app is allowed; the total count is ignored.
+        let mut filter = filter();
+        assert!(filter.accepts_usage(stats_with_apps(0, 0)));
+        assert!(filter.accepts_usage(stats_with_apps(3, 0)));
+        assert!(!filter.accepts_usage(stats_with_apps(1, 1)));
+
+        // Bounds are inclusive: a count equal to the limit passes.
+        filter.max_foreign_apps = 2;
+        assert!(filter.accepts_usage(stats_with_apps(2, 2)));
+        assert!(!filter.accepts_usage(stats_with_apps(3, 3)));
+
+        // `--max-any-apps` is disabled unless set; `Some(0)` rejects any app.
+        filter.max_foreign_apps = 0;
+        filter.max_any_apps = Some(0);
+        assert!(filter.accepts_usage(stats_with_apps(0, 0)));
+        assert!(!filter.accepts_usage(stats_with_apps(1, 0)));
+
+        filter.max_any_apps = Some(1);
+        assert!(filter.accepts_usage(stats_with_apps(1, 0)));
+        assert!(!filter.accepts_usage(stats_with_apps(2, 0)));
+
+        // Both limits combine with AND; either can reject on its own.
+        filter.max_foreign_apps = 1;
+        filter.max_any_apps = Some(2);
+        assert!(filter.accepts_usage(stats_with_apps(2, 1)));
+        assert!(!filter.accepts_usage(stats_with_apps(1, 2)), "foreign only");
+        assert!(!filter.accepts_usage(stats_with_apps(3, 0)), "any only");
     }
 
     #[test]
@@ -495,6 +588,36 @@ mod tests {
         assert!(matches!(
             both_free.usage_miss(stats(1024.0, 700.0, 50.0)),
             Some(UsageMiss::Free { .. })
+        ));
+
+        // App limits are checked last: memory and utilization win.
+        let mut apps = filter();
+        apps.max_any_apps = Some(0);
+        assert!(matches!(
+            apps.usage_miss(stats_with_apps(1, 0)),
+            Some(UsageMiss::AnyApps { .. })
+        ));
+        apps.max_utilization = Some(Percent(0.0));
+        let mut busy_util = stats_with_apps(1, 0);
+        busy_util.utilization_percent = 50.0;
+        assert!(matches!(
+            apps.usage_miss(busy_util),
+            Some(UsageMiss::Utilization { .. })
+        ));
+        apps.max_vram = Some(Vram::Bytes(0));
+        let mut busy_memory = stats_with_apps(1, 0);
+        busy_memory.memory_used_mib = 150.0;
+        assert!(matches!(
+            apps.usage_miss(busy_memory),
+            Some(UsageMiss::Used { .. })
+        ));
+
+        // Foreign apps are checked before the total-count limit.
+        let mut foreign_first = filter();
+        foreign_first.max_any_apps = Some(0);
+        assert!(matches!(
+            foreign_first.usage_miss(stats_with_apps(1, 1)),
+            Some(UsageMiss::ForeignApps { .. })
         ));
     }
 }

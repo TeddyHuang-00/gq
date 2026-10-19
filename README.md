@@ -87,6 +87,9 @@ gq run -i 2-5 -k 2 --dry-run
 
 # Wait up to an hour for two cards with at least 8 GiB free and low utilization
 gq run -k 2 --min-vram 8G --max-util 5 --poll 30 --timeout 3600 -- python train.py
+
+# Cards running other users' apps are in use by default; allow one foreign app
+gq run --max-foreign-apps 1 -- python train.py
 ```
 
 Commands run directly, without a shell.

@@ -28,7 +28,7 @@ flowchart TD
     O -->|no, first probe| P["Exit 64"]
     O -->|no, later probe| Q["Warn and wait for the next round"]
     Q --> M
-    O -->|yes| R["Apply idle memory and utilization predicate"]
+    O -->|yes| R["Apply idle memory, utilization, and app predicate"]
     R --> S["Select cards with the configured strategy"]
     S --> T{"Selection found?"}
     T -->|no| U{"Dry-run or no-wait?"}
@@ -86,6 +86,12 @@ That immediate retry is a bound against an unstable driver state, not an extra w
 If the retry also produces an inconsistent set, the error is handled like any other probe failure.
 Probe counts above 60 warn once because they take roughly one second per extra sample and are rarely useful.
 A probe count whose one-second intervals cannot fit in the timeout also warns before the first probe.
+
+Each round also makes one `nvidia-smi --query-compute-apps=gpu_uuid,pid` call after the usage samples.
+That call is a single snapshot, not one sample per probe, so app counts are not averaged across the round.
+Apps are attributed to cards by the GPU UUID reported with the usage samples.
+Empty app output is normal on an idle host.
+A failing or malformed app query is handled like any other probe failure.
 
 ## Wait loop
 

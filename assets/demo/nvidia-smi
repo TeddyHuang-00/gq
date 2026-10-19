@@ -15,12 +15,16 @@ GPU3    NODE    NODE    NV4      X      0-31            0               N/A
 EOF
         exit 0
         ;;
+    --query-compute-apps*)
+        # No compute apps: every card is free of foreign processes.
+        exit 0
+        ;;
     esac
 done
 
 cat <<'EOF'
-0, 24564 MiB, 1520 MiB, 23044 MiB, 71 %
-1, 24564 MiB, 24480 MiB, 84 MiB, 0 %
-2, 24564 MiB, 3420 MiB, 21144 MiB, 38 %
-3, 24564 MiB, 24476 MiB, 88 MiB, 0 %
+0, GPU-00000000-0000-0000-0000-000000000000, 24564 MiB, 1520 MiB, 23044 MiB, 71 %
+1, GPU-00000001-0000-0000-0000-000000000000, 24564 MiB, 24480 MiB, 84 MiB, 0 %
+2, GPU-00000002-0000-0000-0000-000000000000, 24564 MiB, 3420 MiB, 21144 MiB, 38 %
+3, GPU-00000003-0000-0000-0000-000000000000, 24564 MiB, 24476 MiB, 88 MiB, 0 %
 EOF

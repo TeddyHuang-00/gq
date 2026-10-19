@@ -182,7 +182,7 @@ fn compare_scores(left: (f64, f64), right: (f64, f64)) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::LinkType;
+    use crate::query::{AppCount, LinkType};
 
     fn cards(used_mib: &[f64]) -> Vec<(usize, UsageInfo)> {
         used_mib
@@ -196,6 +196,7 @@ mod tests {
                         memory_free_mib: 1024.0 - used,
                         memory_used_mib: used,
                         utilization_percent: 0.0,
+                        apps: AppCount::default(),
                     },
                 )
             })

@@ -38,6 +38,8 @@ gq run [OPTIONS] [COMMAND]...
 | `--max-vram <SIZE_OR_PERCENT>` | 100 MiB used      | Require used VRAM to be at most the threshold. Conflicts with `--min-vram`.                                                  |
 | `--min-vram <SIZE_OR_PERCENT>` | unset             | Require free VRAM to be at least the threshold. Conflicts with `--max-vram`.                                                 |
 | `--max-utilization <PERCENT>`  | unset             | Require utilization to be at most the threshold. Alias: `--max-util`.                                                        |
+| `--max-foreign-apps <COUNT>`   | 0                 | Require at most this many apps owned by other users. Apps with unreadable owners count as foreign.                           |
+| `--max-any-apps <COUNT>`       | unset             | Require at most this many apps in total, regardless of owner.                                                                |
 | `--probe-count <COUNT>`        | 1                 | Number of samples per probe round, one second apart. Alias: `--probe-cnt`.                                                   |
 | `-k, --count <COUNT>`          | 1                 | Number of cards to select.                                                                                                   |
 | `--strategy <STRATEGY>`        | `first`           | Card ordering: `first`, `min-used`, or `topology-aware`.                                                                     |
@@ -63,7 +65,7 @@ gq list [OPTIONS]
 ```
 
 `gq list` probes the cards and prints their current status.
-It accepts the same filter options as `gq run` (`--include`, `--exclude`, `--max-vram`, `--min-vram`, `--max-utilization`, and `--probe-count`).
+It accepts the same filter options as `gq run` (`--include`, `--exclude`, `--max-vram`, `--min-vram`, `--max-utilization`, `--max-foreign-apps`, `--max-any-apps`, and `--probe-count`).
 A card that passes the idle predicate is marked `Available`; the others are marked `In use`.
 
 | Option                  | Default  | Meaning                                    |
@@ -125,7 +127,7 @@ Data and decisions are written to stdout.
 
 - Default level is Warn: warnings and errors only, such as degraded or contradictory requests, probe failures, and candidate shortfalls.
 - `-v` enables Info: idle thresholds, wait reasons, starting cards, and the effective candidate scope when `--include` or `--exclude` is set.
-- `-vv` enables Debug: excluded indices, the unfiltered `N/N` candidate count, per-GPU idle decisions with the computed threshold, selection ranking and topology target tuples, and the next probe delay with the remaining timeout.
+- `-vv` enables Debug: excluded indices, the unfiltered `N/N` candidate count, per-GPU idle decisions with the computed threshold and app counts, selection ranking and topology target tuples, and the next probe delay with the remaining timeout.
 - `-vvv` enables Trace, including full `nvidia-smi` output.
   Further repeats stay at Trace.
 - `-q` disables logging entirely.
