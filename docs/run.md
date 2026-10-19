@@ -122,6 +122,7 @@ When `--strategy topology-aware` misses because the best-connected group is busy
 It makes one probe and selection attempt, ignores `--poll`, and does not retry between rounds.
 `--timeout` still bounds the probe and can produce 75.
 On a successful probe it prints either `would run on GPUs 2,3` and exits 0, or `no GPUs match the current constraints` and exits 75.
+stdout keeps the single result line; selection details go to the stderr log, visible with `-v` (idle rule) and `-vv` (per-card reasons).
 A probe or topology failure exits 1, and an expired timeout exits 75.
 
 ## Probe failures and candidate shrink

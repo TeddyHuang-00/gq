@@ -281,6 +281,7 @@ impl SelectWaitAndExecute {
         };
         if self.execute.dry_run {
             println!("would run on GPUs {}", join_cards(&selected));
+            dry_run_hint();
             return Ok(Round::Done(Exit::Ok));
         }
         if let Some(signal) = signals.take() {
@@ -328,6 +329,7 @@ impl SelectWaitAndExecute {
                 );
             }
             println!("no GPUs match the current constraints");
+            dry_run_hint();
             return Some(Exit::Code(ExitCode::from(TEMPORARY_FAILURE)));
         }
         let advice = match (topology_miss, self.wait.no_wait) {
@@ -396,6 +398,15 @@ impl SelectWaitAndExecute {
 /// Formats cards as a comma-separated list.
 fn join_cards(cards: &[usize]) -> String {
     cards.iter().join(",")
+}
+
+/// Points dry-run users at the log when selection details are hidden.
+fn dry_run_hint() {
+    if !log::log_enabled!(log::Level::Info) {
+        eprintln!(
+            "selection details are only in the log; add -v for the idle rule, -vv for per-card reasons"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -105,6 +105,7 @@ The pretty matrix and JSON include both directions for each pair; CSV lists each
 `gq run` has no format option.
 Logs go to stderr.
 A dry-run decision goes to stdout.
+stdout keeps the single result line; selection details go to the stderr log, visible with `-v` (idle rule) and `-vv` (per-card reasons).
 A running child inherits gq's standard input, output, and error.
 
 ## Exit codes

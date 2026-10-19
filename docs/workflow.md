@@ -71,6 +71,7 @@ gq run -i 2-5 -k 2 --dry-run
 
 `--dry-run` makes one probe and one selection attempt.
 It prints `would run on GPUs <indices>` and exits 0 on success, or prints `no GPUs match the current constraints` and exits 75.
+stdout keeps the single result line; selection details go to the stderr log, visible with `-v` (idle rule) and `-vv` (per-card reasons).
 It ignores `--poll` and does not wait.
 `<indices>` is the comma-separated list that the probe selects, so the example above prints `would run on GPUs 2,3` only when cards 2 and 3 are the ones chosen.
 

@@ -252,12 +252,26 @@ fn dry_run_selects_without_executing() -> Result<()> {
         .output()?;
 
     assert_eq!(code(&output), 0, "stderr: {}", text(&output.stderr));
-    assert!(
-        text(&output.stdout).contains("would run on GPUs 0"),
+    assert_eq!(
+        text(&output.stdout),
+        "would run on GPUs 0\n",
         "stdout: {}",
         text(&output.stdout)
     );
+    assert!(
+        text(&output.stderr).contains("add -v"),
+        "stderr: {}",
+        text(&output.stderr)
+    );
     assert!(!sentinel.exists(), "command ran during dry run");
+
+    let verbose = run(&stub, &["-v", "run", "--dry-run", "--", "true"])?;
+    assert_eq!(code(&verbose), 0, "stderr: {}", text(&verbose.stderr));
+    assert!(
+        !text(&verbose.stderr).contains("add -v"),
+        "stderr: {}",
+        text(&verbose.stderr)
+    );
     Ok(())
 }
 
@@ -595,6 +609,31 @@ fn topology_target_mismatch_is_explained() -> Result<()> {
         !stderr.contains("candidate GPUs idle; need 2"),
         "stderr: {stderr}"
     );
+
+    // The same miss under --dry-run keeps the single stdout line and hints at
+    // the stderr logs.
+    let output = run(
+        &stub,
+        &[
+            "run",
+            "--dry-run",
+            "-k",
+            "2",
+            "--strategy",
+            "topology-aware",
+            "--",
+            "true",
+        ],
+    )?;
+    let stderr = text(&output.stderr);
+    assert_eq!(code(&output), 75, "stderr: {stderr}");
+    assert_eq!(
+        text(&output.stdout),
+        "no GPUs match the current constraints\n",
+        "stdout: {}",
+        text(&output.stdout)
+    );
+    assert!(stderr.contains("add -v"), "stderr: {stderr}");
     Ok(())
 }
 
