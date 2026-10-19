@@ -403,9 +403,7 @@ fn join_cards(cards: &[usize]) -> String {
 /// Points dry-run users at the log when selection details are hidden.
 fn dry_run_hint() {
     if !log::log_enabled!(log::Level::Info) {
-        eprintln!(
-            "selection details are only in the log; add -v for the idle rule, -vv for per-card reasons"
-        );
+        eprintln!("(add -v for more details)");
     }
 }
 
