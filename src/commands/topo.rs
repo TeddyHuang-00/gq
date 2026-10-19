@@ -2,7 +2,6 @@
 
 use std::{collections::BTreeMap, io::IsTerminal};
 
-use clap::Args;
 use tabled::{
     Table,
     builder::Builder,
@@ -12,17 +11,9 @@ use tabled::{
 use super::Exit;
 use crate::{
     data::{LinkType, Quality, Topology as QueryTopology},
-    options::output::OutputMode,
+    options::{cli::Topology, output::OutputMode},
     writer,
 };
-
-/// Queries all GPUs and build the topology.
-#[derive(Args, Debug)]
-pub struct Topology {
-    /// Output format
-    #[arg(short, long, default_value = "pretty")]
-    pub format: OutputMode,
-}
 
 impl Topology {
     pub fn execute(&self) -> anyhow::Result<Exit> {

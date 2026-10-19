@@ -17,11 +17,11 @@ use clap_complete::CompleteEnv;
 use simple_logger::SimpleLogger;
 
 fn main() -> ExitCode {
-    CompleteEnv::with_factory(commands::Cli::command)
+    CompleteEnv::with_factory(options::cli::Cli::command)
         .var("GQ_COMPLETE")
         .complete();
 
-    let args = match commands::Cli::try_parse() {
+    let args = match options::cli::Cli::try_parse() {
         Ok(args) => args,
         Err(error) => {
             let code = if error.use_stderr() { 64 } else { 0 };
@@ -60,10 +60,10 @@ fn main() -> ExitCode {
     }
 }
 
-fn dispatch(args: &commands::Cli) -> Result<commands::Exit> {
+fn dispatch(args: &options::cli::Cli) -> Result<commands::Exit> {
     match &args.command {
-        commands::Commands::List(command) => command.execute(),
-        commands::Commands::Topo(command) => command.execute(),
-        commands::Commands::Run(command) => command.execute(),
+        options::cli::Commands::List(command) => command.execute(),
+        options::cli::Commands::Topo(command) => command.execute(),
+        options::cli::Commands::Run(command) => command.execute(),
     }
 }

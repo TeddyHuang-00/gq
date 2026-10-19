@@ -10,19 +10,14 @@ use clap::{CommandFactory, ValueEnum};
 use clap_complete::{Shell, generate_to};
 use clap_mangen::Man;
 
-#[path = "src/commands/mod.rs"]
-mod commands;
-#[path = "src/data/mod.rs"]
-mod data;
 #[path = "src/options/mod.rs"]
 mod options;
 #[path = "src/units/mod.rs"]
 mod units;
-#[path = "src/writer/mod.rs"]
-mod writer;
 
 fn main() -> io::Result<()> {
-    println!("cargo::rerun-if-changed=src");
+    println!("cargo::rerun-if-changed=src/options");
+    println!("cargo::rerun-if-changed=src/units");
 
     let out_dir = env::var_os("OUT_DIR")
         .map(PathBuf::from)
@@ -36,7 +31,7 @@ fn main() -> io::Result<()> {
     fs::create_dir_all(&completions)?;
     fs::create_dir_all(&man_dir)?;
 
-    let mut command = commands::Cli::command();
+    let mut command = options::cli::Cli::command();
     for shell in Shell::value_variants() {
         generate_to(*shell, &mut command, "gq", &completions)?;
     }

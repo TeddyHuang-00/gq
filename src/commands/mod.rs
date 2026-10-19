@@ -2,12 +2,9 @@ pub mod list;
 pub mod run;
 pub mod topo;
 
-use std::process::ExitCode;
+mod filtering;
 
-use clap::{
-    ArgAction, Parser, Subcommand,
-    builder::{Styles, styling::AnsiColor},
-};
+use std::process::ExitCode;
 
 /// Exit code for a request that cannot be satisfied (usage error).
 pub const USAGE_ERROR: u8 = 64;
@@ -30,48 +27,4 @@ impl Exit {
             Self::Code(code) => code,
         }
     }
-}
-
-#[derive(Debug, Subcommand)]
-pub enum Commands {
-    Run(run::SelectWaitAndExecute),
-    List(list::List),
-    Topo(topo::Topology),
-}
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "gq",
-    author,
-    version,
-    about = env!("CARGO_PKG_DESCRIPTION"),
-    styles = Styles::styled()
-        .header(AnsiColor::BrightGreen.on_default().bold())
-        .usage(AnsiColor::Yellow.on_default())
-        .literal(AnsiColor::Cyan.on_default())
-        .placeholder(AnsiColor::BrightCyan.on_default())
-)]
-pub struct Cli {
-    /// Set the log verbosity level
-    ///
-    /// - 0 = Warn (default)
-    /// - 1 = Info
-    /// - 2 = Debug
-    /// - 3+ = Trace
-    #[arg(
-        short,
-        long,
-        action = ArgAction::Count,
-        global = true,
-        verbatim_doc_comment
-    )]
-    pub verbose: u8,
-
-    /// Suppress all logging. Command, list, topology, and dry-run data still
-    /// print.
-    #[arg(short, long, global = true, conflicts_with = "verbose")]
-    pub quiet: bool,
-
-    #[command(subcommand)]
-    pub command: Commands,
 }

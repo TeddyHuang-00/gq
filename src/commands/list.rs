@@ -4,7 +4,6 @@
 use std::io::IsTerminal;
 
 use anyhow::Result;
-use clap::Args;
 use serde::Serialize;
 use tabled::{
     Table, Tabled,
@@ -15,20 +14,9 @@ use tabled::{
 use super::Exit;
 use crate::{
     data::AllUsage,
-    options::{filter::Filter, output::OutputMode},
+    options::{cli::List, output::OutputMode},
     writer,
 };
-
-/// List GPUs and their status. Alternative to `nvidia-smi`
-#[derive(Args, Debug)]
-pub struct List {
-    /// Output format
-    #[arg(short, long, default_value = "pretty")]
-    pub format: OutputMode,
-
-    #[command(flatten, next_help_heading = "Filter")]
-    pub filter: Filter,
-}
 
 #[derive(Serialize, Tabled)]
 struct Row {
