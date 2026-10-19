@@ -23,3 +23,8 @@ fix: format
 [doc("Run all tests")]
 test: check
     cargo test --locked
+
+[doc("Record the demo GIF from a fresh release build")]
+demo:
+    cargo build --release --locked --quiet
+    vhs assets/demo.tape
