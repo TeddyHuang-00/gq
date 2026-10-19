@@ -5,10 +5,7 @@ use std::{cmp::Ordering, collections::BTreeMap};
 use clap::{Args, ValueEnum};
 use itertools::Itertools;
 
-use crate::{
-    data::{Topology, UsageInfo},
-    score::LinkProfile,
-};
+use crate::data::{LinkProfile, Topology, UsageInfo};
 
 /// Card ordering strategy when selecting cards.
 #[derive(Clone, Copy, Debug, ValueEnum)]

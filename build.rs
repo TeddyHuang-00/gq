@@ -16,8 +16,6 @@ mod commands;
 mod data;
 #[path = "src/options/mod.rs"]
 mod options;
-#[path = "src/score.rs"]
-mod score;
 #[path = "src/units/mod.rs"]
 mod units;
 #[path = "src/writer/mod.rs"]

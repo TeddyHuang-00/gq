@@ -14,12 +14,11 @@ use itertools::Itertools;
 
 use super::{Exit, TEMPORARY_FAILURE, USAGE_ERROR};
 use crate::{
-    data::{AllUsage, Topology},
+    data::{AllUsage, LinkProfile, Topology},
     options::{
         filter::Filter,
         select::{Select, Strategy},
     },
-    score::LinkProfile,
 };
 
 /// Controls how to obtain the cards

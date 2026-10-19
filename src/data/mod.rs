@@ -9,5 +9,5 @@ mod usage;
 // UsageInfo::apps.
 #[cfg(test)]
 pub use apps::AppCount;
-pub use topology::{LinkType, Quality, Topology};
+pub use topology::{LinkProfile, LinkType, Quality, Topology};
 pub use usage::{AllUsage, UsageInfo};

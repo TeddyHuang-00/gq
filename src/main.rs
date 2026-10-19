@@ -3,7 +3,6 @@
 mod commands;
 mod data;
 mod options;
-mod score;
 mod units;
 mod writer;
 

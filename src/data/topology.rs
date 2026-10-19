@@ -12,6 +12,10 @@ use nom::{
     sequence::{delimited, preceded, separated_pair, terminated},
 };
 
+mod score;
+
+pub use score::LinkProfile;
+
 use super::probe::smi;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,7 +54,7 @@ impl fmt::Display for Quality {
     }
 }
 
-// Built-in priors; `LinkProfile` in `score.rs` overrides them for
+// Built-in priors; `LinkProfile` in `topology/score.rs` overrides them for
 // topology-aware selection.
 impl LinkType {
     /// One-direction bandwidth estimate, in GB/s.
