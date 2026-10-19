@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Result;
 use nom::{
@@ -55,6 +55,9 @@ pub(super) fn count_apps(
     uid_of: impl Fn(u32) -> Option<u32>,
 ) -> BTreeMap<usize, AppCount> {
     let mut counts: BTreeMap<usize, AppCount> = BTreeMap::new();
+    // Snapshot-scoped only: pids are reused across rounds and /proc visibility
+    // can change, so negative results are cached just for this call.
+    let mut owners: HashMap<u32, Option<u32>> = HashMap::new();
     for (uuid, pid) in rows {
         let Some(&index) = uuid_to_index.get(uuid) else {
             log::debug!("ignoring compute app pid {pid} on unknown GPU {uuid}");
@@ -62,7 +65,7 @@ pub(super) fn count_apps(
         };
         let count = counts.entry(index).or_default();
         count.any += 1;
-        if uid_of(*pid) != Some(current_uid) {
+        if *owners.entry(*pid).or_insert_with(|| uid_of(*pid)) != Some(current_uid) {
             count.foreign += 1;
         }
     }
@@ -89,6 +92,8 @@ fn parse_status_uid(status: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use rustix::process::getuid;
 
     use super::*;
@@ -146,6 +151,36 @@ mod tests {
             AppCount { any: 1, foreign: 1 }
         );
         assert_eq!(counts.len(), 2);
+    }
+
+    #[test]
+    fn app_counts_resolve_each_pid_once_per_snapshot() {
+        let uuids = BTreeMap::from([("GPU-a".to_owned(), 0), ("GPU-b".to_owned(), 1)]);
+        // pid 10 spans both cards; pid 11 belongs to someone else. A
+        // multi-GPU process must not repeat the same /proc read.
+        let rows = vec![
+            ("GPU-a".to_owned(), 10),
+            ("GPU-b".to_owned(), 10),
+            ("GPU-b".to_owned(), 11),
+        ];
+        let calls = Cell::new(0);
+        let counts = count_apps(&rows, &uuids, 1000, |pid| {
+            calls.set(calls.get() + 1);
+            match pid {
+                10 => Some(1000),
+                _ => Some(1001),
+            }
+        });
+
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            counts.get(&0).copied().unwrap_or_default(),
+            AppCount { any: 1, foreign: 0 }
+        );
+        assert_eq!(
+            counts.get(&1).copied().unwrap_or_default(),
+            AppCount { any: 2, foreign: 1 }
+        );
     }
 
     #[test]
