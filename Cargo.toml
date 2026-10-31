@@ -13,7 +13,7 @@ clap = { version = "4.6.7", features = ["cargo", "derive", "help"] }
 clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
 csv = "1.4"
 itertools = "0.15.0"
-log = "0.4.34"
+log = "0.4.35"
 ndarray = "0.17.2"
 nom = "8.0.0"
 rustix = { version = "1.1.6", features = ["process", "std"] }
