@@ -10,7 +10,7 @@ repository = "https://github.com/TeddyHuang-00/gq"
 [dependencies]
 anyhow = { version = "1.0.104", features = ["backtrace"] }
 clap = { version = "4.6.7", features = ["cargo", "derive", "help"] }
-clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
+clap_complete = { version = "4.6.12", features = ["unstable-dynamic"] }
 csv = "1.4"
 itertools = "0.15.0"
 log = "0.4.35"
@@ -26,7 +26,7 @@ toml = "1.2.1"
 
 [build-dependencies]
 clap = { version = "4.6.7", features = ["cargo", "derive", "help"] }
-clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
+clap_complete = { version = "4.6.12", features = ["unstable-dynamic"] }
 clap_mangen = "0.3.3"
 
 [lints.clippy]
