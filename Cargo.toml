@@ -8,7 +8,7 @@ authors = ["Nan Huang <teddyhuangnan@gmail.com>"]
 repository = "https://github.com/TeddyHuang-00/gq"
 
 [dependencies]
-anyhow = { version = "1.0.104", features = ["backtrace"] }
+anyhow = { version = "1.0.105", features = ["backtrace"] }
 clap = { version = "4.6.7", features = ["cargo", "derive", "help"] }
 clap_complete = { version = "4.6.11", features = ["unstable-dynamic"] }
 csv = "1.4"
